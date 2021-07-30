@@ -126,8 +126,9 @@ class PreActBottleneck(nn.Module):
             self.gn_proj.weight.copy_(proj_gn_weight.view(-1))
             self.gn_proj.bias.copy_(proj_gn_bias.view(-1))
 
+
 class ResNetV2(nn.Module):
-    """Implementation of Pre-activation (v2) ResNet mode."""
+    """Implementation of Pre-activation (v2) ResNet model."""
 
     def __init__(self, block_units, width_factor):
         super().__init__()
@@ -145,17 +146,20 @@ class ResNetV2(nn.Module):
 
         self.body = nn.Sequential(OrderedDict([
             ('block1', nn.Sequential(OrderedDict(
-                [('unit1', PreActBottleneck(cin=width, cout=width*4, cmid=width))] +
-                [(f'unit{i:d}', PreActBottleneck(cin=width*4, cout=width*4, cmid=width)) for i in range(2, block_units[0] + 1)],
-                ))),
+                [('unit1', PreActBottleneck(cin=width, cout=width*4, cmid=width))]
+                + [(f'unit{i:d}', PreActBottleneck(cin=width*4, cout=width*4, cmid=width))
+                   for i in range(2, block_units[0] + 1)],
+            ))),
             ('block2', nn.Sequential(OrderedDict(
-                [('unit1', PreActBottleneck(cin=width*4, cout=width*8, cmid=width*2, stride=2))] +
-                [(f'unit{i:d}', PreActBottleneck(cin=width*8, cout=width*8, cmid=width*2)) for i in range(2, block_units[1] + 1)],
-                ))),    
+                [('unit1', PreActBottleneck(cin=width*4, cout=width*8, cmid=width*2, stride=2))]
+                + [(f'unit{i:d}', PreActBottleneck(cin=width*8, cout=width*8, cmid=width*2))
+                   for i in range(2, block_units[1] + 1)],
+            ))),
             ('block3', nn.Sequential(OrderedDict(
-                [('unit1', PreActBottleneck(cin=width*8, cout=width*16, cmid=width*4, stride=2))] +
-                [(f'unit{i:d}', PreActBottleneck(cin=width*16, cout=width*16, cmid=width*4)) for i in range(2, block_units[2] + 1)],
-                ))),
+                [('unit1', PreActBottleneck(cin=width*8, cout=width*16, cmid=width*4, stride=2))]
+                + [(f'unit{i:d}', PreActBottleneck(cin=width*16, cout=width*16, cmid=width*4))
+                   for i in range(2, block_units[2] + 1)],
+            ))),
         ]))
 
     def forward(self, x):

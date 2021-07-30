@@ -63,7 +63,7 @@ def setup(args):
     if args.dataset == "imagenet":
         num_classes=1000
 
-    model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes,alpha=args.alpha)
+    model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes, alpha=args.alpha)
     model.load_from(np.load(args.pretrained_dir))
     model.to(args.device)
     num_params = count_parameters(model)
@@ -224,7 +224,7 @@ def train(args, model):
                     writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=global_step)
                 if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
                     accuracy = valid(args, model, writer, test_loader, global_step)
-                    print("Accuracy:",accuracy)
+                    print("Accuracy:", accuracy)
                     if best_acc < accuracy:
                         save_model(args, model)
                         best_acc = accuracy
@@ -240,7 +240,7 @@ def train(args, model):
         writer.close()
     logger.info("Best Accuracy: \t%f" % best_acc)
     logger.info("End Training!")
-    print("Best Accuracy:",best_acc)
+    print("Best Accuracy:", best_acc)
 
 
 def main():
@@ -248,7 +248,7 @@ def main():
     # Required parameters
     parser.add_argument("--name", required=True,
                         help="Name of this run. Used for monitoring.")
-    parser.add_argument("--dataset", choices=["cifar10", "cifar100","imagenet"], default="cifar10",
+    parser.add_argument("--dataset", choices=["cifar10", "cifar100", "imagenet"], default="cifar10",
                         help="Which downstream task.")
     parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
                                                  "ViT-L_32", "ViT-H_14"],
