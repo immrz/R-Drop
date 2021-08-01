@@ -140,7 +140,12 @@ dmypy.json
 cython_debug/
 
 !/checkpoint/
-!/data/
-!/logs/
-!/output/
+# !/data/
+# !/logs/
+# !/output/
+data
+logs
+output
 .idea
+
+tox.ini

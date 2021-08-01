@@ -18,6 +18,7 @@ from apex import amp
 from apex.parallel import DistributedDataParallel as DDP
 
 from models.modeling import VisionTransformer, CONFIGS
+from models.stoch_depth import wide_resnet101_2_stoch_depth_lineardecay
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader
 from utils.dist_util import get_world_size
@@ -55,7 +56,7 @@ def save_model(args, model):
     logger.info("Saved model checkpoint to [DIR: %s]", args.output_dir)
 
 
-def setup(args):
+def setup_ViT(args):
     # Prepare model
     config = CONFIGS[args.model_type]
 
@@ -69,6 +70,17 @@ def setup(args):
     num_params = count_parameters(model)
 
     logger.info("{}".format(config))
+    logger.info("Training parameters %s", args)
+    logger.info("Total Parameter: \t%2.1fM" % num_params)
+    print(num_params)
+    return args, model
+
+
+def setup_ResNet(args):
+    model = wide_resnet101_2_stoch_depth_lineardecay(pretrained=True, probs=(1, 0.5), mult_flag=False)
+    model.to(args.device)
+    num_params = count_parameters(model)
+
     logger.info("Training parameters %s", args)
     logger.info("Total Parameter: \t%2.1fM" % num_params)
     print(num_params)
@@ -144,7 +156,7 @@ def train(args, model):
     """ Train the model """
     if args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir, exist_ok=True)
-        writer = SummaryWriter(log_dir=os.path.join("logs", args.name))
+        writer = SummaryWriter(log_dir=os.path.join(args.output_dir, "logs", args.name))
 
     args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
 
@@ -251,12 +263,12 @@ def main():
     parser.add_argument("--dataset", choices=["cifar10", "cifar100", "imagenet"], default="cifar10",
                         help="Which downstream task.")
     parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
-                                                 "ViT-L_32", "ViT-H_14"],
+                                                 "ViT-L_32", "ViT-H_14", "WRN"],
                         default="ViT-B_16",
                         help="Which variant to use.")
     parser.add_argument("--pretrained_dir", type=str, default="checkpoint/ViT-B_16.npz",
                         help="Where to search for pretrained ViT models.")
-    parser.add_argument("--output_dir", default="output", type=str,
+    parser.add_argument("--output_dir", default=os.environ.get("AMLT_OUTPUT_DIR", "output"), type=str,
                         help="The output directory where checkpoints will be written.")
 
     parser.add_argument("--img_size", default=384, type=int,
@@ -324,7 +336,10 @@ def main():
     set_seed(args)
 
     # Model & Tokenizer Setup
-    args, model = setup(args)
+    if args.model_type.startswith('ViT'):
+        args, model = setup_ViT(args)
+    else:
+        args, model = setup_ResNet(args)
 
     # Training
     train(args, model)
