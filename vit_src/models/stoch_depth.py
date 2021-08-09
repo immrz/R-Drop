@@ -1,8 +1,10 @@
 import torch
 from torch import Tensor
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.utils.model_zoo as model_zoo
 from typing import Type, Any, Callable, Union, List, Tuple, Optional
+import logging
 
 
 __all__ = ['wide_resnet101_2_stoch_depth_lineardecay']
@@ -18,6 +20,9 @@ model_urls = {
     'wide_resnet50_2': 'https://download.pytorch.org/models/wide_resnet50_2-95faca4d.pth',
     'wide_resnet101_2': 'https://download.pytorch.org/models/wide_resnet101_2-32ee1156.pth',
 }
+
+
+logger = logging.getLogger(__name__)
 
 
 def conv3x3(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, dilation: int = 1) -> nn.Conv2d:
@@ -218,7 +223,10 @@ class StoDepth_ResNet_lineardecay(nn.Module):
         norm_layer: Optional[Callable[..., nn.Module]] = None,
         probs: Tuple[float, float] = (1, 0.5),
         mult_flag: bool = False,
+        consistency: str = None,
+        alpha: float = 1.0,
     ) -> None:
+
         super(StoDepth_ResNet_lineardecay, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -241,10 +249,16 @@ class StoDepth_ResNet_lineardecay(nn.Module):
         self.relu = nn.ReLU()
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
+        self.consistency = consistency
+        self.alpha = alpha
+        if self.consistency is not None:
+            logger.info(f"Consistency loss is imposed on {consistency} with alpha={alpha}")
+
         self.mult_flag = mult_flag
         self.prob_now = probs[0]
         self.prob_delta = probs[0] - probs[1]
         self.prob_step = self.prob_delta / (sum(layers) - 1)
+        logger.info(f"prob_keep ranges from {probs[0]} to {probs[1]} with delta={self.prob_step}")
 
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2,
@@ -316,24 +330,60 @@ class StoDepth_ResNet_lineardecay(nn.Module):
         x = self.layer4(x)
 
         x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
+        z = torch.flatten(x, 1)
+        x = self.fc(z)
 
-        return x
+        return x, z
 
     def forward(self, x: Tensor, labels: Tensor = None) -> Tensor:
-        logits = self._forward_impl(x)
+        logits, hidden = self._forward_impl(x)
         if labels is not None:
             loss = self.ce(logits, labels)
+
+            # forward twice
+            if self.consistency is not None:
+                logits2, hidden2 = self._forward_impl(x)
+                loss = (loss + self.ce(logits2, labels)) * 0.5
+
+                if self.consistency == 'logit':
+                    loss -= self.alpha * F.cosine_similarity(logits, logits2, dim=1).mean()
+                elif self.consistency == 'hidden':
+                    loss -= self.alpha * F.cosine_similarity(hidden, hidden2, dim=1).mean()
+                else:  # prob
+                    logp1, p1 = F.log_softmax(logits, dim=1), F.softmax(logits, dim=1)
+                    logp2, p2 = F.log_softmax(logits2, dim=1), F.softmax(logits2, dim=1)
+                    kld = F.kl_div(logp1, p2, reduction='batchmean')
+                    kld_reverse = F.kl_div(logp2, p1, reduction='batchmean')
+                    loss += self.alpha * (kld + kld_reverse)
+
             return loss
         else:
             return logits, None
 
 
+def _resnet(
+    block: Type[Union[StoDepth_BasicBlock, StoDepth_Bottleneck]],
+    layers: List[int],
+    pretrained_url: str = None,
+    num_classes: int = 1000,
+    replace_fc: bool = False,
+    **kwargs,
+) -> StoDepth_ResNet_lineardecay:
+
+    model = StoDepth_ResNet_lineardecay(block, layers, **kwargs)
+    if pretrained_url is not None:
+        state_dict = model_zoo.load_url(pretrained_url)
+        model.load_state_dict(state_dict)
+
+    if num_classes != 1000 or replace_fc:
+        in_features = model.fc.in_features
+        model.fc = nn.Linear(in_features, num_classes)
+
+    return model
+
+
 def wide_resnet101_2_stoch_depth_lineardecay(
     pretrained: bool = False,
-    probs: Tuple[float, float] = (1, 0.5),
-    mult_flag: bool = False,
     **kwargs: Any,
 ) -> StoDepth_ResNet_lineardecay:
     r"""Wide ResNet-101-2 model from
@@ -347,8 +397,22 @@ def wide_resnet101_2_stoch_depth_lineardecay(
         progress (bool): If True, displays a progress bar of the download to stderr
     """
     kwargs['width_per_group'] = 64 * 2
-    model = StoDepth_ResNet_lineardecay(StoDepth_Bottleneck, [3, 4, 23, 3], probs=probs, mult_flag=mult_flag, **kwargs)
-    if pretrained:
-        state_dict = model_zoo.load_url(model_urls['wide_resnet101_2'])
-        model.load_state_dict(state_dict)
+    kwargs['pretrained_url'] = model_urls['wide_resnet101_2'] if pretrained else None
+    model = _resnet(StoDepth_Bottleneck, [3, 4, 23, 3], **kwargs)
+    return model
+
+
+def resnet50(
+    pretrained: bool = False,
+    **kwargs: Any,
+) -> StoDepth_ResNet_lineardecay:
+    r"""ResNet-50 model from
+    `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        progress (bool): If True, displays a progress bar of the download to stderr
+    """
+    kwargs['probs'] = (1, 1)
+    kwargs['pretrained_url'] = model_urls['resnet50'] if pretrained else None
+    model = _resnet(StoDepth_Bottleneck, [3, 4, 6, 3], **kwargs)
     return model

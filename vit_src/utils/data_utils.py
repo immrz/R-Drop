@@ -34,12 +34,12 @@ def get_loader(args):
                                    download=True,
                                    transform=transform_test) if args.local_rank in [-1, 0] else None
 
+    elif args.dataset == "imagenet":
+        trainset = datasets.ImageFolder(root='ILSVRC2012/train', transform=transform_train)
 
-    elif  args.dataset == "imagenet":
-        trainset =datasets.ImageFolder(root='ILSVRC2012/train',transform=transform_train)
-        
-        testset = datasets.ImageFolder(root='ILSVRC2012/val',transform=transform_test) if args.local_rank in [-1, 0] else None
-        
+        testset = datasets.ImageFolder(root='ILSVRC2012/val', transform=transform_test) \
+            if args.local_rank in [-1, 0] else None
+
     else:
         trainset = datasets.CIFAR100(root="./data",
                                      train=True,

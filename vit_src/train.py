@@ -10,7 +10,6 @@ import numpy as np
 from datetime import timedelta
 
 import torch
-import torch.distributed as dist
 
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
@@ -18,7 +17,7 @@ from apex import amp
 from apex.parallel import DistributedDataParallel as DDP
 
 from models.modeling import VisionTransformer, CONFIGS
-from models.stoch_depth import wide_resnet101_2_stoch_depth_lineardecay
+from models.stoch_depth import wide_resnet101_2_stoch_depth_lineardecay, resnet50
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader
 from utils.dist_util import get_world_size
@@ -77,13 +76,32 @@ def setup_ViT(args):
 
 
 def setup_ResNet(args):
-    model = wide_resnet101_2_stoch_depth_lineardecay(pretrained=True, probs=(1, 0.5), mult_flag=False)
+    num_classes = 10 if args.dataset == "cifar10" else 100
+    if args.dataset == "imagenet":
+        num_classes=1000
+
+    if args.model_type == 'WRN':
+        model = wide_resnet101_2_stoch_depth_lineardecay(pretrained=True, probs=(1, 0.5), mult_flag=False, num_classes=num_classes, replace_fc=True)
+    elif args.model_type == 'resnet50':
+        model = resnet50(pretrained=True, consistency=args.consistency, alpha=args.alpha, num_classes=num_classes, replace_fc=True)
+    else:
+        raise NotImplementedError
+
     model.to(args.device)
     num_params = count_parameters(model)
 
     logger.info("Training parameters %s", args)
     logger.info("Total Parameter: \t%2.1fM" % num_params)
     print(num_params)
+
+    if args.local_rank in [-1, 0]:
+        print('parameters:')
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                print('\t{:45}\ttrainable\t{}\tdevice:{}'.format(name, param.size(), param.device))
+            else:
+                print('\t{:45}\tfixed\t{}\tdevice:{}'.format(name, param.size(), param.device))
+
     return args, model
 
 
@@ -114,7 +132,7 @@ def valid(args, model, writer, test_loader, global_step):
                           desc="Validating... (loss=X.X)",
                           bar_format="{l_bar}{r_bar}",
                           dynamic_ncols=True,
-                          disable=args.local_rank not in [-1, 0])
+                          disable=args.disable_tqdm or args.local_rank not in [-1, 0])
     loss_fct = torch.nn.CrossEntropyLoss()
     for step, batch in enumerate(epoch_iterator):
         batch = tuple(t.to(args.device) for t in batch)
@@ -123,7 +141,7 @@ def valid(args, model, writer, test_loader, global_step):
             logits = model(x)[0]
 
             eval_loss = loss_fct(logits, y)
-            eval_losses.update(eval_loss.item())
+            eval_losses.update(eval_loss.item(), n=y.size(0))
 
             preds = torch.argmax(logits, dim=-1)
 
@@ -148,7 +166,8 @@ def valid(args, model, writer, test_loader, global_step):
     logger.info("Valid Loss: %2.5f" % eval_losses.avg)
     logger.info("Valid Accuracy: %2.5f" % accuracy)
 
-    writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
+    writer.add_scalar("valid/loss", scalar_value=eval_losses.avg, global_step=global_step)
+    writer.add_scalar("valid/accuracy", scalar_value=accuracy, global_step=global_step)
     return accuracy
 
 
@@ -203,7 +222,7 @@ def train(args, model):
                               desc="Training (X / X Steps) (loss=X.X)",
                               bar_format="{l_bar}{r_bar}",
                               dynamic_ncols=True,
-                              disable=args.local_rank not in [-1, 0])
+                              disable=args.disable_tqdm or args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
             batch = tuple(t.to(args.device) for t in batch)
             x, y = batch
@@ -263,7 +282,7 @@ def main():
     parser.add_argument("--dataset", choices=["cifar10", "cifar100", "imagenet"], default="cifar10",
                         help="Which downstream task.")
     parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
-                                                 "ViT-L_32", "ViT-H_14", "WRN"],
+                                                 "ViT-L_32", "ViT-H_14", "WRN", "resnet50"],
                         default="ViT-B_16",
                         help="Which variant to use.")
     parser.add_argument("--pretrained_dir", type=str, default="checkpoint/ViT-B_16.npz",
@@ -293,6 +312,8 @@ def main():
                         help="Step of training to perform learning rate warmup for.")
     parser.add_argument("--max_grad_norm", default=1.0, type=float,
                         help="Max gradient norm.")
+    parser.add_argument("--consistency", default=None, type=str, choices=["prob", "logit", "hidden"],
+                        help="whether and where to put consistency loss")
     parser.add_argument("--alpha", default=0.3, type=float,
                         help="alpha for kl loss")
 
@@ -312,6 +333,9 @@ def main():
                              "0 (default value): dynamic loss scaling.\n"
                              "Positive power of 2: static loss scaling value.\n")
     args = parser.parse_args()
+
+    # disable tqdm if on itp server
+    args.disable_tqdm = 'AMLT_DATA_DIR' in os.environ
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1:

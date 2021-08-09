@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from torch.nn import CrossEntropyLoss, Dropout, Softmax, Linear, Conv2d, LayerNorm,MSELoss
+from torch.nn import CrossEntropyLoss, Dropout, Softmax, Linear, Conv2d, LayerNorm
 from torch.nn.modules.utils import _pair
 from scipy import ndimage
 
@@ -247,7 +247,7 @@ class Encoder(nn.Module):
                 attn_weights.append(weights)
         hidden_state.pop(-1)
         encoded = self.encoder_norm(hidden_states)
-        return encoded, attn_weights,hidden_state
+        return encoded, attn_weights, hidden_state
 
 
 class Transformer(nn.Module):
@@ -258,12 +258,12 @@ class Transformer(nn.Module):
 
     def forward(self, input_ids):
         embedding_output = self.embeddings(input_ids)
-        encoded, attn_weights,hidden_state = self.encoder(embedding_output)
-        return encoded, attn_weights,hidden_state
+        encoded, attn_weights, hidden_state = self.encoder(embedding_output)
+        return encoded, attn_weights, hidden_state
 
 
 class VisionTransformer(nn.Module):
-    def __init__(self, config, img_size=224, num_classes=21843, zero_head=False, vis=False,alpha=0.3):
+    def __init__(self, config, img_size=224, num_classes=21843, zero_head=False, vis=False, alpha=0.3):
         super(VisionTransformer, self).__init__()
         self.num_classes = num_classes
         self.zero_head = zero_head
@@ -272,8 +272,9 @@ class VisionTransformer(nn.Module):
         self.transformer = Transformer(config, img_size, vis)
         self.head = Linear(config.hidden_size, num_classes)
         self.alpha=alpha
+
     def forward(self, x, labels=None):
-        x1, attn_weights1,hidden_state1 = self.transformer(x)
+        x1, attn_weights1, hidden_state1 = self.transformer(x)
 
         logits = self.head(x1[:, 0])
 
@@ -281,19 +282,17 @@ class VisionTransformer(nn.Module):
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(logits.view(-1, self.num_classes), labels.view(-1))
 
-            x2, attn_weights2,hidden_state2 = self.transformer(x)
+            x2, attn_weights2, hidden_state2 = self.transformer(x)
             newlogits = self.head(x2[:, 0])
             loss2 = loss_fct(newlogits.view(-1, self.num_classes), labels.view(-1))
             loss+=loss2
-            
-            
+
             p = torch.log_softmax(logits.view(-1, self.num_classes), dim=-1)
             p_tec = torch.softmax(logits.view(-1, self.num_classes), dim=-1)
             q = torch.log_softmax(newlogits.view(-1, self.num_classes), dim=-1)
             q_tec = torch.softmax(newlogits.view(-1, self.num_classes), dim=-1)
             kl_loss = torch.nn.functional.kl_div(p, q_tec, reduction='none').sum()
             reverse_kl_loss = torch.nn.functional.kl_div(q, p_tec, reduction='none').sum()
-
 
             loss += self.alpha * (kl_loss + reverse_kl_loss)
 
