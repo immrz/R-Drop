@@ -4,7 +4,6 @@ from __future__ import absolute_import, division, print_function
 import logging
 import argparse
 import os
-import random
 import numpy as np
 
 from datetime import timedelta
@@ -13,46 +12,26 @@ import torch
 
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
-from apex import amp
-from apex.parallel import DistributedDataParallel as DDP
+
+try:
+    from apex import amp
+    from apex.parallel import DistributedDataParallel as DDP
+
+    _apex_installed = True
+
+except ImportError:
+    _apex_installed = False
 
 from models.modeling import VisionTransformer, CONFIGS
-from models.stoch_depth import wide_resnet101_2_stoch_depth_lineardecay, resnet50
+import models.stoch_depth as stoch_depth
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader
 from utils.dist_util import get_world_size
+from utils.utils import AverageMeter, bool_flag, simple_accuracy, \
+    save_model, count_parameters, set_seed, display_all_param
 
 
 logger = logging.getLogger(__name__)
-
-
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-
-def simple_accuracy(preds, labels):
-    return (preds == labels).mean()
-
-
-def save_model(args, model):
-    model_to_save = model.module if hasattr(model, 'module') else model
-    model_checkpoint = os.path.join(args.output_dir, "%s_checkpoint.bin" % args.name)
-    torch.save(model_to_save.state_dict(), model_checkpoint)
-    logger.info("Saved model checkpoint to [DIR: %s]", args.output_dir)
 
 
 def setup_ViT(args):
@@ -80,12 +59,16 @@ def setup_ResNet(args):
     if args.dataset == "imagenet":
         num_classes=1000
 
-    if args.model_type == 'WRN':
-        model = wide_resnet101_2_stoch_depth_lineardecay(pretrained=True, probs=(1, 0.5), mult_flag=False, num_classes=num_classes, replace_fc=True)
-    elif args.model_type == 'resnet50':
-        model = resnet50(pretrained=True, consistency=args.consistency, alpha=args.alpha, num_classes=num_classes, replace_fc=True)
-    else:
-        raise NotImplementedError
+    model = getattr(stoch_depth, args.model_type)(
+        pretrained=True,
+        probs=(args.prob_start, args.prob_end) if args.stoch_depth else (1, 1),
+        mult_flag=False,
+        num_classes=num_classes,
+        replace_fc=True,
+        consistency=args.consistency,
+        alpha=args.alpha,
+        stop_grad=args.stop_grad,
+    )
 
     model.to(args.device)
     num_params = count_parameters(model)
@@ -96,26 +79,8 @@ def setup_ResNet(args):
 
     if args.local_rank in [-1, 0]:
         print('parameters:')
-        for name, param in model.named_parameters():
-            if param.requires_grad:
-                print('\t{:45}\ttrainable\t{}\tdevice:{}'.format(name, param.size(), param.device))
-            else:
-                print('\t{:45}\tfixed\t{}\tdevice:{}'.format(name, param.size(), param.device))
-
+        display_all_param(model)
     return args, model
-
-
-def count_parameters(model):
-    params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    return params/1000000
-
-
-def set_seed(args):
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    if args.n_gpu > 0:
-        torch.cuda.manual_seed_all(args.seed)
 
 
 def valid(args, model, writer, test_loader, global_step):
@@ -196,8 +161,9 @@ def train(args, model):
     if args.fp16:
         model, optimizer = amp.initialize(models=model,
                                           optimizers=optimizer,
-                                          opt_level=args.fp16_opt_level)
-        amp._amp_state.loss_scalers[0]._loss_scale = 2**20
+                                          opt_level=args.fp16_opt_level,
+                                          loss_scale=args.loss_scale)
+        # amp._amp_state.loss_scalers[0]._loss_scale = 2**20
 
     # Distributed training
     if args.local_rank != -1:
@@ -258,6 +224,7 @@ def train(args, model):
                     print("Accuracy:", accuracy)
                     if best_acc < accuracy:
                         save_model(args, model)
+                        logger.info("Saved model checkpoint to [DIR: %s]", args.output_dir)
                         best_acc = accuracy
                     model.train()
 
@@ -282,7 +249,7 @@ def main():
     parser.add_argument("--dataset", choices=["cifar10", "cifar100", "imagenet"], default="cifar10",
                         help="Which downstream task.")
     parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
-                                                 "ViT-L_32", "ViT-H_14", "WRN", "resnet50"],
+                                                 "ViT-L_32", "ViT-H_14", "wide_resnet101_2", "resnet152", "resnet50"],
                         default="ViT-B_16",
                         help="Which variant to use.")
     parser.add_argument("--pretrained_dir", type=str, default="checkpoint/ViT-B_16.npz",
@@ -300,6 +267,11 @@ def main():
                         help="Run prediction on validation set every so many steps."
                              "Will always run one evaluation at the end of training.")
 
+    parser.add_argument("--stoch_depth", type=bool_flag, default=True, const=True, nargs="?",
+                        help="Whether to use stochastic depth.")
+    parser.add_argument("--prob_start", type=int, default=1., help="Preserving probability of the first layer.")
+    parser.add_argument("--prob_end", type=float, default=0.5, help="Preserving probability of the last layer.")
+
     parser.add_argument("--learning_rate", default=1e-2, type=float,
                         help="The initial learning rate for SGD.")
     parser.add_argument("--weight_decay", default=0, type=float,
@@ -316,6 +288,7 @@ def main():
                         help="whether and where to put consistency loss")
     parser.add_argument("--alpha", default=0.3, type=float,
                         help="alpha for kl loss")
+    parser.add_argument("--stop_grad", action="store_true", help="Whether stop grad for the good submodel.")
 
     parser.add_argument("--local_rank", type=int, default=-1,
                         help="local_rank for distributed training on gpus")
@@ -325,17 +298,20 @@ def main():
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
     parser.add_argument('--fp16', action='store_true',
                         help="Whether to use 16-bit float precision instead of 32-bit")
-    parser.add_argument('--fp16_opt_level', type=str, default='O2',
+    parser.add_argument('--fp16_opt_level', type=str, default='O1',
                         help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
                              "See details at https://nvidia.github.io/apex/amp.html")
-    parser.add_argument('--loss_scale', type=float, default=0,
+    parser.add_argument('--loss_scale', type=float, default=None,
                         help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
-                             "0 (default value): dynamic loss scaling.\n"
+                             "None (default value): dynamic loss scaling.\n"
                              "Positive power of 2: static loss scaling value.\n")
     args = parser.parse_args()
 
     # disable tqdm if on itp server
     args.disable_tqdm = 'AMLT_DATA_DIR' in os.environ
+
+    # disable apex if not installed
+    args.fp16 = args.fp16 and _apex_installed
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1:

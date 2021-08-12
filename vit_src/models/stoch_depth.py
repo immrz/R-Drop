@@ -7,7 +7,7 @@ from typing import Type, Any, Callable, Union, List, Tuple, Optional
 import logging
 
 
-__all__ = ['wide_resnet101_2_stoch_depth_lineardecay']
+__all__ = ['wide_resnet101_2', 'resnet152', 'resnet50']
 
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-f37072fd.pth',
@@ -225,6 +225,7 @@ class StoDepth_ResNet_lineardecay(nn.Module):
         mult_flag: bool = False,
         consistency: str = None,
         alpha: float = 1.0,
+        stop_grad: bool = False,
     ) -> None:
 
         super(StoDepth_ResNet_lineardecay, self).__init__()
@@ -251,8 +252,9 @@ class StoDepth_ResNet_lineardecay(nn.Module):
 
         self.consistency = consistency
         self.alpha = alpha
+        self.stop_grad = stop_grad
         if self.consistency is not None:
-            logger.info(f"Consistency loss is imposed on {consistency} with alpha={alpha}")
+            logger.info(f"Consistency loss is imposed on {consistency} with alpha={alpha}, stop_grad={stop_grad}")
 
         self.mult_flag = mult_flag
         self.prob_now = probs[0]
@@ -335,26 +337,45 @@ class StoDepth_ResNet_lineardecay(nn.Module):
 
         return x, z
 
+    def compute_bi_kld(self, logits1, logits2):
+        """Always assume logits1 has smaller loss than logits2.
+        """
+        print(self.ce(logits1, self.labels).item(), ', ', self.ce(logits2, self.labels).item())
+
+        logp1, p1 = F.log_softmax(logits1, dim=1), F.softmax(logits1, dim=1)
+        logp2, p2 = F.log_softmax(logits2, dim=1), F.softmax(logits2, dim=1)
+
+        # use the good submodel to teach the bad submodel
+        if self.stop_grad:
+            logp1, p1 = logp1.detach(), p1.detach()
+
+        kld = F.kl_div(logp1, p2, reduction='batchmean')
+        kld_reverse = F.kl_div(logp2, p1, reduction='batchmean')
+        return kld + kld_reverse
+
     def forward(self, x: Tensor, labels: Tensor = None) -> Tensor:
         logits, hidden = self._forward_impl(x)
         if labels is not None:
             loss = self.ce(logits, labels)
 
+            self.labels = labels
+
             # forward twice
             if self.consistency is not None:
                 logits2, hidden2 = self._forward_impl(x)
-                loss = (loss + self.ce(logits2, labels)) * 0.5
+                loss2 = self.ce(logits2, labels)
+                loss1, loss = loss, 0.5 * (loss + loss2)
 
                 if self.consistency == 'logit':
                     loss -= self.alpha * F.cosine_similarity(logits, logits2, dim=1).mean()
                 elif self.consistency == 'hidden':
                     loss -= self.alpha * F.cosine_similarity(hidden, hidden2, dim=1).mean()
                 else:  # prob
-                    logp1, p1 = F.log_softmax(logits, dim=1), F.softmax(logits, dim=1)
-                    logp2, p2 = F.log_softmax(logits2, dim=1), F.softmax(logits2, dim=1)
-                    kld = F.kl_div(logp1, p2, reduction='batchmean')
-                    kld_reverse = F.kl_div(logp2, p1, reduction='batchmean')
-                    loss += self.alpha * (kld + kld_reverse)
+                    if loss1 < loss2:
+                        cons_loss = self.compute_bi_kld(logits, logits2)
+                    else:
+                        cons_loss = self.compute_bi_kld(logits2, logits)
+                    loss += self.alpha * cons_loss
 
             return loss
         else:
@@ -382,7 +403,7 @@ def _resnet(
     return model
 
 
-def wide_resnet101_2_stoch_depth_lineardecay(
+def wide_resnet101_2(
     pretrained: bool = False,
     **kwargs: Any,
 ) -> StoDepth_ResNet_lineardecay:
@@ -396,9 +417,20 @@ def wide_resnet101_2_stoch_depth_lineardecay(
         pretrained (bool): If True, returns a model pre-trained on ImageNet
         progress (bool): If True, displays a progress bar of the download to stderr
     """
+
     kwargs['width_per_group'] = 64 * 2
     kwargs['pretrained_url'] = model_urls['wide_resnet101_2'] if pretrained else None
     model = _resnet(StoDepth_Bottleneck, [3, 4, 23, 3], **kwargs)
+    return model
+
+
+def resnet152(
+    pretrained: bool = True,
+    **kwargs: Any,
+) -> StoDepth_ResNet_lineardecay:
+
+    kwargs['pretrained_url'] = model_urls['resnet152'] if pretrained else None
+    model = _resnet(StoDepth_Bottleneck, [3, 8, 36, 3], **kwargs)
     return model
 
 
@@ -412,7 +444,7 @@ def resnet50(
         pretrained (bool): If True, returns a model pre-trained on ImageNet
         progress (bool): If True, displays a progress bar of the download to stderr
     """
-    kwargs['probs'] = (1, 1)
+
     kwargs['pretrained_url'] = model_urls['resnet50'] if pretrained else None
     model = _resnet(StoDepth_Bottleneck, [3, 4, 6, 3], **kwargs)
     return model
