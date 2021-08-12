@@ -12,21 +12,13 @@ import torch
 
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
-
-try:
-    from apex import amp
-    from apex.parallel import DistributedDataParallel as DDP
-
-    _apex_installed = True
-
-except ImportError:
-    _apex_installed = False
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.cuda.amp as amp
 
 from models.modeling import VisionTransformer, CONFIGS
 import models.stoch_depth as stoch_depth
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader
-from utils.dist_util import get_world_size
 from utils.utils import AverageMeter, bool_flag, simple_accuracy, \
     save_model, count_parameters, set_seed, display_all_param
 
@@ -158,16 +150,14 @@ def train(args, model):
     else:
         scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total)
 
-    if args.fp16:
-        model, optimizer = amp.initialize(models=model,
-                                          optimizers=optimizer,
-                                          opt_level=args.fp16_opt_level,
-                                          loss_scale=args.loss_scale)
-        # amp._amp_state.loss_scalers[0]._loss_scale = 2**20
+    # scaler for mixed precision training
+    scaler = amp.GradScaler(enabled=args.fp16)
 
     # Distributed training
     if args.local_rank != -1:
-        model = DDP(model, message_size=250000000, gradient_predivide_factor=get_world_size())
+        model = DDP(model,
+                    device_ids=[args.local_rank],
+                    find_unused_parameters=True)  # setting this to True is important for stochastic depth
 
     # Train!
     logger.info("***** Running training *****")
@@ -192,24 +182,26 @@ def train(args, model):
         for step, batch in enumerate(epoch_iterator):
             batch = tuple(t.to(args.device) for t in batch)
             x, y = batch
-            loss = model(x, y)
 
-            if args.gradient_accumulation_steps > 1:
+            with amp.autocast(enabled=args.fp16):
+                loss = model(x, y)
                 loss = loss / args.gradient_accumulation_steps
-            if args.fp16:
-                with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaled_loss.backward()
-            else:
-                loss.backward()
+
+            # scale loss if necessary
+            scaler.scale(loss).backward()
 
             if (step + 1) % args.gradient_accumulation_steps == 0:
-                losses.update(loss.item()*args.gradient_accumulation_steps)
-                if args.fp16:
-                    torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
-                else:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                losses.update(loss.item() * args.gradient_accumulation_steps)
+
+                # unscale gradients for gradient clipping
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+
+                # perform updates
+                scaler.step(optimizer)
+                scaler.update()
+
                 scheduler.step()
-                optimizer.step()
                 optimizer.zero_grad()
                 global_step += 1
 
@@ -309,9 +301,6 @@ def main():
 
     # disable tqdm if on itp server
     args.disable_tqdm = 'AMLT_DATA_DIR' in os.environ
-
-    # disable apex if not installed
-    args.fp16 = args.fp16 and _apex_installed
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1:

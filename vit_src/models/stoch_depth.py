@@ -340,8 +340,6 @@ class StoDepth_ResNet_lineardecay(nn.Module):
     def compute_bi_kld(self, logits1, logits2):
         """Always assume logits1 has smaller loss than logits2.
         """
-        print(self.ce(logits1, self.labels).item(), ', ', self.ce(logits2, self.labels).item())
-
         logp1, p1 = F.log_softmax(logits1, dim=1), F.softmax(logits1, dim=1)
         logp2, p2 = F.log_softmax(logits2, dim=1), F.softmax(logits2, dim=1)
 
@@ -357,8 +355,6 @@ class StoDepth_ResNet_lineardecay(nn.Module):
         logits, hidden = self._forward_impl(x)
         if labels is not None:
             loss = self.ce(logits, labels)
-
-            self.labels = labels
 
             # forward twice
             if self.consistency is not None:
