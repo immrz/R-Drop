@@ -36,6 +36,34 @@ def conv1x1(in_planes: int, out_planes: int, stride: int = 1) -> nn.Conv2d:
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
 
+def drop_path(x, keep_prob: float = 0., training: bool = False):
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
+    This is the same as the DropConnect impl I created for EfficientNet, etc networks, however,
+    the original name is misleading as 'Drop Connect' is a different form of dropout in a separate paper...
+    See discussion: https://github.com/tensorflow/tpu/issues/494#issuecomment-532968956 ... I've opted for
+    changing the layer and argument names to 'drop path' rather than mix DropConnect as a layer name and use
+    'survival rate' as the argument.
+    """
+    if keep_prob >= 1. or not training:
+        return x
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets
+    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+    random_tensor.floor_()  # binarize
+    output = x.div(keep_prob) * random_tensor
+    return output
+
+
+class DropPath(nn.Module):
+    """From https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/layers/drop.py.
+    """
+    def __init__(self, keep_prob=1.):
+        super().__init__()
+        self.keep_prob = keep_prob
+
+    def forward(self, x):
+        return drop_path(x, self.keep_prob, self.training)
+
+
 class StoDepth_BasicBlock(nn.Module):
     expansion: int = 1
 
@@ -134,7 +162,7 @@ class StoDepth_Bottleneck(nn.Module):
         base_width: int = 64,
         dilation: int = 1,
         norm_layer: Optional[Callable[..., nn.Module]] = None,
-        prob: float = 0.5,
+        keep_prob: float = 0.5,
         mult_flag: bool = False,
     ) -> None:
         super(StoDepth_Bottleneck, self).__init__()
@@ -148,64 +176,34 @@ class StoDepth_Bottleneck(nn.Module):
         self.bn2 = norm_layer(width)
         self.conv3 = conv1x1(width, planes * self.expansion)
         self.bn3 = norm_layer(planes * self.expansion)
-        self.relu = nn.ReLU()
+        self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
 
-        self.prob = prob
-        self.coin = torch.distributions.bernoulli.Bernoulli(torch.Tensor([self.prob]))
+        self.keep_prob = keep_prob
+        self.drop_path = DropPath(keep_prob=keep_prob) if keep_prob < 1. else nn.Identity()
         self.mult_flag = mult_flag
 
     def forward(self, x: Tensor) -> Tensor:
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+
         if self.downsample is not None:
             identity = self.downsample(x)
-        else:
-            identity = x
 
-        if self.training:
-            if torch.equal(self.coin.sample(), torch.ones(1)):
-                self.conv1.weight.requires_grad = True
-                self.conv2.weight.requires_grad = True
-                self.conv3.weight.requires_grad = True
-
-                out = self.conv1(x)
-                out = self.bn1(out)
-                out = self.relu(out)
-
-                out = self.conv2(out)
-                out = self.bn2(out)
-                out = self.relu(out)
-
-                out = self.conv3(out)
-                out = self.bn3(out)
-
-                out += identity
-
-            else:  # bypass this block
-                self.conv1.weight.requires_grad = False
-                self.conv2.weight.requires_grad = False
-                self.conv3.weight.requires_grad = False
-
-                out = identity
-
-        else:
-            out = self.conv1(x)
-            out = self.bn1(out)
-            out = self.relu(out)
-
-            out = self.conv2(out)
-            out = self.bn2(out)
-            out = self.relu(out)
-
-            out = self.conv3(out)
-            out = self.bn3(out)
-
-            if self.mult_flag:
-                out = self.prob * out + identity
-            else:
-                out = out + identity
-
+        out = identity + self.drop_path(out)
         out = self.relu(out)
+
         return out
 
 
@@ -307,14 +305,14 @@ class StoDepth_ResNet_lineardecay(nn.Module):
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample, self.groups,
                             self.base_width, previous_dilation, norm_layer,
-                            prob=self.prob_now, mult_flag=self.mult_flag))
+                            keep_prob=self.prob_now, mult_flag=self.mult_flag))
         self.prob_now = self.prob_now - self.prob_step
         self.inplanes = planes * block.expansion
 
         for _ in range(1, blocks):
             layers.append(block(self.inplanes, planes, groups=self.groups,
                                 base_width=self.base_width, dilation=self.dilation,
-                                norm_layer=norm_layer, prob=self.prob_now, mult_flag=self.mult_flag))
+                                norm_layer=norm_layer, keep_prob=self.prob_now, mult_flag=self.mult_flag))
             self.prob_now = self.prob_now - self.prob_step
 
         return nn.Sequential(*layers)

@@ -157,7 +157,7 @@ def train(args, model):
     if args.local_rank != -1:
         model = DDP(model,
                     device_ids=[args.local_rank],
-                    find_unused_parameters=True)  # setting this to True is important for stochastic depth
+                    find_unused_parameters=False)  # no need to be True for current stoch_depth implementation
 
     # Train!
     logger.info("***** Running training *****")
@@ -261,8 +261,8 @@ def main():
 
     parser.add_argument("--stoch_depth", type=bool_flag, default=True, const=True, nargs="?",
                         help="Whether to use stochastic depth.")
-    parser.add_argument("--prob_start", type=int, default=1., help="Preserving probability of the first layer.")
-    parser.add_argument("--prob_end", type=float, default=0.5, help="Preserving probability of the last layer.")
+    parser.add_argument("--prob_start", type=float, default=1., help="Survival probability of the first layer.")
+    parser.add_argument("--prob_end", type=float, default=0.5, help="Survial probability of the last layer.")
 
     parser.add_argument("--learning_rate", default=1e-2, type=float,
                         help="The initial learning rate for SGD.")
