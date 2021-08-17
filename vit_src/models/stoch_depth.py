@@ -222,6 +222,7 @@ class StoDepth_ResNet_lineardecay(nn.Module):
         probs: Tuple[float, float] = (1, 0.5),
         mult_flag: bool = False,
         consistency: str = None,
+        consist_func: str = None,
         alpha: float = 1.0,
         stop_grad: bool = False,
     ) -> None:
@@ -249,10 +250,14 @@ class StoDepth_ResNet_lineardecay(nn.Module):
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
         self.consistency = consistency
+        self.consist_func = consist_func
         self.alpha = alpha
         self.stop_grad = stop_grad
         if self.consistency is not None:
-            logger.info(f"Consistency loss is imposed on {consistency} with alpha={alpha}, stop_grad={stop_grad}")
+            assert self.consist_func is not None
+            logger.info(f"Consistency loss is imposed on {consistency} with alpha={alpha}, stop_grad={stop_grad}, function={consist_func}.")
+        else:
+            logger.info("No consistency loss.")
 
         self.mult_flag = mult_flag
         self.prob_now = probs[0]
@@ -335,8 +340,9 @@ class StoDepth_ResNet_lineardecay(nn.Module):
 
         return x, z
 
-    def compute_bi_kld(self, logits1, logits2):
+    def compute_consistency_loss(self, logits1, logits2):
         """Always assume logits1 has smaller loss than logits2.
+        NOTE: KL(p||q) = kl_div(q.log(), p)
         """
         logp1, p1 = F.log_softmax(logits1, dim=1), F.softmax(logits1, dim=1)
         logp2, p2 = F.log_softmax(logits2, dim=1), F.softmax(logits2, dim=1)
@@ -345,9 +351,20 @@ class StoDepth_ResNet_lineardecay(nn.Module):
         if self.stop_grad:
             logp1, p1 = logp1.detach(), p1.detach()
 
-        kld = F.kl_div(logp1, p2, reduction='batchmean')
-        kld_reverse = F.kl_div(logp2, p1, reduction='batchmean')
-        return kld + kld_reverse
+        if self.consist_func == "kl":
+            kld = F.kl_div(logp1, p2, reduction='batchmean')
+            kld_reverse = F.kl_div(logp2, p1, reduction='batchmean')
+            loss = kld + kld_reverse
+        elif self.consist_func == "js":
+            mean = 0.5 * (p1 + p2)
+            mean = torch.clamp(mean, min=1e-7, max=1.)
+            log_mean = mean.log()
+            loss = F.kl_div(log_mean, p1, reduction='batchmean') + F.kl_div(log_mean, p2, reduction='batchmean')
+        else:  # ce
+            ce = -(p1 * logp2).sum()
+            ce_reverse = -(p2 * logp1).sum()
+            loss = (ce + ce_reverse) / p1.size(0)
+        return 0.5 * loss
 
     def forward(self, x: Tensor, labels: Tensor = None) -> Tensor:
         logits, hidden = self._forward_impl(x)
@@ -366,9 +383,9 @@ class StoDepth_ResNet_lineardecay(nn.Module):
                     loss -= self.alpha * F.cosine_similarity(hidden, hidden2, dim=1).mean()
                 else:  # prob
                     if loss1 < loss2:
-                        cons_loss = self.compute_bi_kld(logits, logits2)
+                        cons_loss = self.compute_consistency_loss(logits, logits2)
                     else:
-                        cons_loss = self.compute_bi_kld(logits2, logits)
+                        cons_loss = self.compute_consistency_loss(logits2, logits)
                     loss += self.alpha * cons_loss
 
             return loss

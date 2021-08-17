@@ -20,7 +20,7 @@ import models.stoch_depth as stoch_depth
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader
 from utils.utils import AverageMeter, bool_flag, simple_accuracy, \
-    save_model, count_parameters, set_seed, display_all_param
+    save_model, count_parameters, set_seed
 
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,6 @@ def setup_ViT(args):
     logger.info("{}".format(config))
     logger.info("Training parameters %s", args)
     logger.info("Total Parameter: \t%2.1fM" % num_params)
-    print(num_params)
     return args, model
 
 
@@ -51,13 +50,17 @@ def setup_ResNet(args):
     if args.dataset == "imagenet":
         num_classes=1000
 
+    if args.pretrained:
+        logger.warning("Pretrained model will be downloaded and used!")
+
     model = getattr(stoch_depth, args.model_type)(
-        pretrained=True,
+        pretrained=args.pretrained,
         probs=(args.prob_start, args.prob_end) if args.stoch_depth else (1, 1),
         mult_flag=False,
         num_classes=num_classes,
         replace_fc=True,
         consistency=args.consistency,
+        consist_func=args.consist_func,
         alpha=args.alpha,
         stop_grad=args.stop_grad,
     )
@@ -67,11 +70,10 @@ def setup_ResNet(args):
 
     logger.info("Training parameters %s", args)
     logger.info("Total Parameter: \t%2.1fM" % num_params)
-    print(num_params)
 
-    if args.local_rank in [-1, 0]:
-        print('parameters:')
-        display_all_param(model)
+    # if args.local_rank in [-1, 0]:
+    #     print('parameters:')
+    #     display_all_param(model)
     return args, model
 
 
@@ -281,6 +283,8 @@ def main():
     parser.add_argument("--alpha", default=0.3, type=float,
                         help="alpha for kl loss")
     parser.add_argument("--stop_grad", action="store_true", help="Whether stop grad for the good submodel.")
+    parser.add_argument("--pretrained", type=bool_flag, default=True, const=True, nargs="?",
+                        help="Whether load pretrained model from url.")
 
     parser.add_argument("--local_rank", type=int, default=-1,
                         help="local_rank for distributed training on gpus")
@@ -297,6 +301,17 @@ def main():
                         help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
                              "None (default value): dynamic loss scaling.\n"
                              "Positive power of 2: static loss scaling value.\n")
+
+    # add consistency type args
+    args, _ = parser.parse_known_args()
+    if args.consistency == "prob":
+        parser.add_argument("--consist_func", default="kl", type=str, choices=["kl", "js", "ce"],
+                            help="Type of divergence function if consistency is set to prob.")
+    elif args.consistency in ["logit", "hidden"]:
+        parser.add_argument("--consist_func", default="cosine", type=str, choices=["cosine", "l2"],
+                            help="Type of divergence function if consistency is set to hidden or logit.")
+    else:
+        parser.set_defaults(consist_func=None)
     args = parser.parse_args()
 
     # disable tqdm if on itp server
