@@ -16,11 +16,11 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.cuda.amp as amp
 
 from models.modeling import VisionTransformer, CONFIGS
-import models.stoch_depth as stoch_depth
+import models.resnet as resnet
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader
 from utils.utils import AverageMeter, bool_flag, simple_accuracy, \
-    save_model, count_parameters, set_seed
+    save_model, count_parameters, set_seed, display_resnet_layers
 
 
 logger = logging.getLogger(__name__)
@@ -50,15 +50,10 @@ def setup_ResNet(args):
     if args.dataset == "imagenet":
         num_classes=1000
 
-    if args.pretrained:
-        logger.warning("Pretrained model will be downloaded and used!")
-
-    model = getattr(stoch_depth, args.model_type)(
+    model = getattr(resnet, args.model_type)(
         pretrained=args.pretrained,
         probs=(args.prob_start, args.prob_end) if args.stoch_depth else (1, 1),
-        mult_flag=False,
         num_classes=num_classes,
-        replace_fc=True,
         consistency=args.consistency,
         consist_func=args.consist_func,
         alpha=args.alpha,
@@ -71,9 +66,9 @@ def setup_ResNet(args):
     logger.info("Training parameters %s", args)
     logger.info("Total Parameter: \t%2.1fM" % num_params)
 
-    # if args.local_rank in [-1, 0]:
-    #     print('parameters:')
-    #     display_all_param(model)
+    if args.dry_run and args.local_rank in [-1, 0]:
+        print('parameters:')
+        display_resnet_layers(model)
     return args, model
 
 
@@ -114,7 +109,7 @@ def valid(args, model, writer, test_loader, global_step):
             all_label[0] = np.append(
                 all_label[0], y.detach().cpu().numpy(), axis=0
             )
-        epoch_iterator.set_description("Validating... (loss=%2.5f)" % eval_losses.val)
+        epoch_iterator.set_description("Validating... (loss=%2.5f)" % eval_losses.avg)
 
     all_preds, all_label = all_preds[0], all_label[0]
     accuracy = simple_accuracy(all_preds, all_label)
@@ -187,14 +182,19 @@ def train(args, model):
 
             with amp.autocast(enabled=args.fp16):
                 loss = model(x, y)
-                loss = loss / args.gradient_accumulation_steps
+                if isinstance(loss, dict):
+                    to_backward = loss.pop("agg") / args.gradient_accumulation_steps
+                else:
+                    to_backward = loss / args.gradient_accumulation_steps
+                    loss = {"cls": loss.item()}
 
             # scale loss if necessary
-            scaler.scale(loss).backward()
+            scaler.scale(to_backward).backward()
+
+            # update loss moving average
+            losses.update(loss, n=y.size(0))
 
             if (step + 1) % args.gradient_accumulation_steps == 0:
-                losses.update(loss.item() * args.gradient_accumulation_steps)
-
                 # unscale gradients for gradient clipping
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
@@ -208,10 +208,13 @@ def train(args, model):
                 global_step += 1
 
                 epoch_iterator.set_description(
-                    "Training (%d / %d Steps) (loss=%2.5f)" % (global_step, t_total, losses.val)
+                    "Training (%d / %d Steps) (loss=%2.5f)" % (global_step, t_total, losses.avg)
                 )
                 if args.local_rank in [-1, 0]:
-                    writer.add_scalar("train/loss", scalar_value=losses.val, global_step=global_step)
+                    for loss_key in loss:
+                        writer.add_scalar(f"train/{loss_key}_loss",
+                                          scalar_value=losses.get_avg(loss_key),
+                                          global_step=global_step)
                     writer.add_scalar("train/lr", scalar_value=scheduler.get_lr()[0], global_step=global_step)
                 if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
                     accuracy = valid(args, model, writer, test_loader, global_step)
@@ -243,7 +246,8 @@ def main():
     parser.add_argument("--dataset", choices=["cifar10", "cifar100", "imagenet"], default="cifar10",
                         help="Which downstream task.")
     parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
-                                                 "ViT-L_32", "ViT-H_14", "wide_resnet101_2", "resnet152", "resnet50"],
+                                                 "ViT-L_32", "ViT-H_14", "wide_resnet101_2",
+                                                 "resnet152", "resnet50", "resnet110"],
                         default="ViT-B_16",
                         help="Which variant to use.")
     parser.add_argument("--pretrained_dir", type=str, default="checkpoint/ViT-B_16.npz",
@@ -288,19 +292,13 @@ def main():
 
     parser.add_argument("--local_rank", type=int, default=-1,
                         help="local_rank for distributed training on gpus")
-    parser.add_argument('--seed', type=int, default=42,
+    parser.add_argument("--seed", type=int, default=42,
                         help="random seed for initialization")
-    parser.add_argument('--gradient_accumulation_steps', type=int, default=16,
+    parser.add_argument("-gas", "--gradient_accumulation_steps", type=int, default=16,
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
-    parser.add_argument('--fp16', action='store_true',
+    parser.add_argument("--fp16", action="store_true",
                         help="Whether to use 16-bit float precision instead of 32-bit")
-    parser.add_argument('--fp16_opt_level', type=str, default='O1',
-                        help="For fp16: Apex AMP optimization level selected in ['O0', 'O1', 'O2', and 'O3']."
-                             "See details at https://nvidia.github.io/apex/amp.html")
-    parser.add_argument('--loss_scale', type=float, default=None,
-                        help="Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
-                             "None (default value): dynamic loss scaling.\n"
-                             "Positive power of 2: static loss scaling value.\n")
+    parser.add_argument("--dry_run", action="store_true", help="Display model and exit.")
 
     # add consistency type args
     args, _ = parser.parse_known_args()
@@ -344,6 +342,9 @@ def main():
         args, model = setup_ViT(args)
     else:
         args, model = setup_ResNet(args)
+
+    if args.dry_run:
+        return
 
     # Training
     train(args, model)

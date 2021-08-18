@@ -3,6 +3,7 @@ import random
 import numpy as np
 import torch
 import argparse
+from collections import defaultdict
 
 
 class AverageMeter(object):
@@ -10,17 +11,30 @@ class AverageMeter(object):
     def __init__(self):
         self.reset()
 
+    @property
+    def avg(self):
+        if self.count == 0:
+            return -1.
+        else:
+            return self.sum["cls"] / self.count
+
+    def get_avg(self, key):
+        if self.count == 0:
+            return -1.
+        else:
+            return self.sum[key] / self.count
+
     def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
+        self.sum = defaultdict(lambda: 0.)
         self.count = 0
 
     def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
+        if isinstance(val, dict):
+            for k, v in val.items():
+                self.sum[k] += v * n
+        else:
+            self.sum["cls"] += val * n
         self.count += n
-        self.avg = self.sum / self.count
 
 
 def bool_flag(v):
@@ -64,3 +78,19 @@ def display_all_param(model):
             print('\t{:45}\ttrainable\t{}\tdevice:{}'.format(name, param.size(), param.device))
         else:
             print('\t{:45}\tfixed\t{}\tdevice:{}'.format(name, param.size(), param.device))
+
+
+def display_resnet_layers(net):
+    def _draw_border(length=80):
+        print("=" * length)
+
+    print(net.conv1)
+    num_layer = 4 if hasattr(net, "layer4") else 3
+    for i in range(num_layer):
+        layer = getattr(net, f"layer{i+1}")
+        _draw_border()
+        print(f"Layer {i+1}")
+        for block in layer:
+            print(block)
+    _draw_border()
+    print(net.fc)

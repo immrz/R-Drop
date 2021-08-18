@@ -13,16 +13,29 @@ def get_loader(args):
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()
 
-    transform_train = transforms.Compose([
-        transforms.RandomResizedCrop((args.img_size, args.img_size), scale=(0.05, 1.0)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
-    ])
-    transform_test = transforms.Compose([
-        transforms.Resize((args.img_size, args.img_size)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
-    ])
+    if args.dataset.startswith("cifar"):
+        transform_train = transforms.Compose([
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomCrop(32, 4),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+        ])
+        transform_test = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+        ])
+
+    else:
+        transform_train = transforms.Compose([
+            transforms.RandomResizedCrop((args.img_size, args.img_size), scale=(0.05, 1.0)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+        ])
+        transform_test = transforms.Compose([
+            transforms.Resize((args.img_size, args.img_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+        ])
 
     if args.dataset == "cifar10":
         trainset = datasets.CIFAR10(root="./data",
