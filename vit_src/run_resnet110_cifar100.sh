@@ -1,17 +1,17 @@
 args=$@
 
 prt="False"
-ps=0.8
-pe=0.8
-tbs=128
+ps=1
+pe=0.5
+tbs=1024
 ebs=1024
-ee=400
-gas=1
+ee=50
+gas=2
 mt="resnet110"
 ds="cifar100"
-nstep=110000
-ws=1000
-lr=0.1
+nstep=25000
+ws=250
+lr=0.8
 wd="1e-4"
 alpha=1
 

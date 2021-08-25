@@ -170,6 +170,9 @@ class StochDepthBottleneck(nn.Module):
 
 
 class StochDepthConsistencyBase(nn.Module):
+    """The base class for models with stochastic depth and R-Drop consistency loss.
+    Child classes should implement the method '_forward_impl(self, x)'
+    """
     def __init__(
         self,
         prob_start: float = 1.,

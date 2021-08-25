@@ -7,18 +7,21 @@ from collections import defaultdict
 
 
 class AverageMeter(object):
-    """Computes and stores the average and current value"""
+    """Computes and stores the average and summed value.
+    Use a dictionary to store different losses separately.
+    The key 'cls' corresponds to the classification loss, and will always exist.
+    The key 'csst' corresponds to the consistency loss, and will exist only if R-Drop is used.
+    """
     def __init__(self):
         self.reset()
 
     @property
     def avg(self):
-        if self.count == 0:
-            return -1.
-        else:
-            return self.sum["cls"] / self.count
+        """This property returns average classification loss."""
+        return self.get_avg("cls")
 
     def get_avg(self, key):
+        """This method allows access to average of any type of loss."""
         if self.count == 0:
             return -1.
         else:

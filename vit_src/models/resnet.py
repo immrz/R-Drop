@@ -47,7 +47,8 @@ def init_weight(net: nn.Module, zero_init_residual: bool = False):
 
 
 class ResNet(StochDepthConsistencyBase):
-
+    """The commonly used ResNet architecture, but with stochastic depth and consistency loss.
+    """
     def __init__(
         self,
         block: Type[Union[StochDepthBasicBlock, StochDepthBottleneck]],
@@ -147,6 +148,8 @@ class ResNet(StochDepthConsistencyBase):
 
 
 class ThreeLayerResNet(StochDepthConsistencyBase):
+    """The three-layer ResNet specialized for CIFAR10/100 dataset.
+    """
     def __init__(
         self,
         block: Type[Union[StochDepthBasicBlock, StochDepthBottleneck]],
@@ -187,7 +190,7 @@ class ThreeLayerResNet(StochDepthConsistencyBase):
             layers.append(block(self.inplanes, planes, stride=stride, downsample=downsample, keep_prob=self.prob_now))
             self.prob_now = self.prob_now - self.prob_step
             self.inplanes = planes * block.expansion
-            downsample = None
+            downsample = None  # only the first block needs downsampling
 
         return nn.Sequential(*layers)
 
