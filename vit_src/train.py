@@ -17,6 +17,7 @@ import torch.cuda.amp as amp
 
 from models.modeling import VisionTransformer, CONFIGS
 import models.resnet as resnet
+import models.efficientnet as effnet
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader
 from utils.utils import AverageMeter, bool_flag, simple_accuracy, \
@@ -42,6 +43,31 @@ def setup_ViT(args):
     logger.info("{}".format(config))
     logger.info("Training parameters %s", args)
     logger.info("Total Parameter: \t%2.1fM" % num_params)
+    return args, model
+
+
+def setup_effnet(args):
+    num_classes = 10 if args.dataset == "cifar10" else 100
+    if args.dataset == "imagenet":
+        num_classes = 1000
+
+    model = getattr(effnet, args.model_type)(
+        pretrained=args.pretrained,
+        num_classes=num_classes,
+        dropout_prob=args.dropout_prob,
+        survival_prob=args.prob_end,
+        consistency=args.consistency,
+        consist_func=args.consist_func,
+        alpha=args.alpha,
+        stop_grad=args.stop_grad,
+    )
+
+    model.to(args.device)
+    num_params = count_parameters(model)
+
+    logger.info("Training parameters %s", args)
+    logger.info("Total Parameter: \t%2.1fM" % num_params)
+
     return args, model
 
 
@@ -134,7 +160,11 @@ def train(args, model):
     args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
 
     # Prepare dataset
-    train_loader, test_loader = get_loader(args)
+    if not hasattr(model, "get_custom_transform"):
+        transform = None
+    else:
+        transform = (model.get_custom_transform(is_training=True), model.get_custom_transform(is_training=False))
+    train_loader, test_loader = get_loader(args, transform=transform)
 
     # Prepare optimizer and scheduler
     optimizer = torch.optim.SGD(model.parameters(),
@@ -247,7 +277,8 @@ def main():
                         help="Which downstream task.")
     parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
                                                  "ViT-L_32", "ViT-H_14", "wide_resnet101_2",
-                                                 "resnet152", "resnet50", "resnet110"],
+                                                 "resnet152", "resnet50", "resnet110",
+                                                 "efficientnetv2_m"],
                         default="ViT-B_16",
                         help="Which variant to use.")
     parser.add_argument("--pretrained_dir", type=str, default="checkpoint/ViT-B_16.npz",
@@ -265,6 +296,7 @@ def main():
                         help="Run prediction on validation set every so many steps."
                              "Will always run one evaluation at the end of training.")
 
+    parser.add_argument("--dropout_prob", type=float, default=0.1)
     parser.add_argument("--stoch_depth", type=bool_flag, default=True, const=True, nargs="?",
                         help="Whether to use stochastic depth.")
     parser.add_argument("--prob_start", type=float, default=1., help="Survival probability of the first layer.")
@@ -338,8 +370,10 @@ def main():
     set_seed(args)
 
     # Model & Tokenizer Setup
-    if args.model_type.startswith('ViT'):
+    if args.model_type.startswith("ViT"):
         args, model = setup_ViT(args)
+    elif args.model_type.startswith("efficientnet"):
+        args, model = setup_effnet(args)
     else:
         args, model = setup_ResNet(args)
 

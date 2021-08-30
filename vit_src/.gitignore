@@ -149,3 +149,4 @@ output
 .idea
 
 tox.ini
+notebooks

@@ -176,7 +176,7 @@ class StochDepthConsistencyBase(nn.Module):
     def __init__(
         self,
         prob_start: float = 1.,
-        prob_step: float = 0.,
+        prob_end: float = 0.5,
         consistency: str = None,
         consist_func: str = None,
         alpha: float = 1.0,
@@ -184,15 +184,15 @@ class StochDepthConsistencyBase(nn.Module):
     ) -> None:
 
         super().__init__()
-        self.prob_now = prob_start
-        self.prob_step = prob_step
+        self.prob_start = prob_start
+        self.prob_end = prob_end
         self.consistency = consistency
         self.consist_func = consist_func
         self.alpha = alpha
         self.stop_grad = stop_grad
         self.ce = nn.CrossEntropyLoss()
 
-        logger.info(f"prob_keep starts from {prob_start} with delta={prob_step}")
+        logger.info(f"prob_keep starts from {prob_start} to {prob_end}")
 
         if self.consistency is not None:
             assert self.consist_func is not None

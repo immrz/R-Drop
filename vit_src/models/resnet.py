@@ -63,8 +63,9 @@ class ResNet(StochDepthConsistencyBase):
         **kwargs: Any,
     ) -> None:
 
-        prob_step = (probs[0] - probs[1]) / (sum(layers) - 1)
-        super().__init__(prob_start=probs[0], prob_step=prob_step, **kwargs)
+        super().__init__(prob_start=probs[0], prob_end=probs[1], **kwargs)
+        self.prob_now = probs[0]
+        self.prob_step = (probs[0] - probs[1]) / (sum(layers) - 1)
 
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -160,8 +161,9 @@ class ThreeLayerResNet(StochDepthConsistencyBase):
         **kwargs: Any,
     ) -> None:
 
-        prob_step = (probs[0] - probs[1]) / (sum(layers) - 1)
-        super().__init__(prob_start=probs[0], prob_step=prob_step, **kwargs)
+        super().__init__(prob_start=probs[0], prob_end=probs[1], **kwargs)
+        self.prob_now = probs[0]
+        self.prob_step = (probs[0] - probs[1]) / (sum(layers) - 1)
         self.inplanes = 16
 
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)

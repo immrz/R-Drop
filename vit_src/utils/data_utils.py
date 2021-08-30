@@ -9,11 +9,14 @@ from torch.utils.data import DataLoader, RandomSampler, DistributedSampler, Sequ
 logger = logging.getLogger(__name__)
 
 
-def get_loader(args):
+def get_loader(args, transform=None):
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()
 
-    if args.dataset.startswith("cifar"):
+    if transform is not None:
+        transform_train, transform_test = transform
+
+    elif args.dataset.startswith("cifar"):
         transform_train = transforms.Compose([
             transforms.RandomHorizontalFlip(),
             transforms.RandomCrop(32, 4),
