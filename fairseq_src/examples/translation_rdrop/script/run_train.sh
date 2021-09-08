@@ -7,7 +7,7 @@ src=de
 tgt=en
 
 DATA_PATH=data-bin/iwslt14.rdrop.tokenized.de-en/
-MODEL_PATH=iwslt14.rdrop.de-en-ckpt
+MODEL_PATH="${AMLT_OUTPUT_DIR:-iwslt14.rdrop.de-en-ckpt}"
 mkdir -p $MODEL_PATH
 nvidia-smi
 
@@ -34,4 +34,4 @@ fairseq-train $DATA_PATH \
     --eval-bleu-remove-bpe \
     --best-checkpoint-metric bleu --maximize-best-checkpoint-metric \
     --max-update 300000 --warmup-updates 4000 --warmup-init-lr 1e-07 --adam-betas '(0.9,0.98)' \
-    --save-dir $MODEL_PATH | tee -a $MODEL_PATH/train.log \
+    --save-dir $MODEL_PATH $@ | tee -a $MODEL_PATH/train.log \

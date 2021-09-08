@@ -140,3 +140,6 @@ log_file/
 .vscode
 __pycache__
 build
+
+# checkpoints
+*ckpt

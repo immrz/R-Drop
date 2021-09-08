@@ -1,3 +1,6 @@
 amlt
 .amltconfig
 .amltignore
+.idea
+tox.ini
+notebooks

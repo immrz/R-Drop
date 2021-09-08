@@ -146,7 +146,3 @@ cython_debug/
 data
 logs
 output
-.idea
-
-tox.ini
-notebooks
