@@ -26,6 +26,7 @@ def parse_args() -> Tuple[TrainingArguments, Namespace]:
 
     parser.add_argument("--pretrained", action="store_true", help="Whether load pretrained model.")
     parser.add_argument("--trainer", default="base", type=str, help="Training strategy.")
+    parser.add_argument("--dry_run", action="store_true", help="Print args and exit.")
 
     parser.add_argument("--opt", default="sgd", type=str, metavar="OPTIMIZER",
                         help="Optimizer (default: sgd)")

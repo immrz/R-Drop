@@ -1,12 +1,12 @@
-import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from torchvision import transforms
 
 from transformers.trainer import Trainer, TrainingArguments
 from timm.optim import create_optimizer_v2
 
 from argparse import Namespace
+from typing import Callable
 
 
 class BaseTrainer(Trainer):
@@ -17,13 +17,16 @@ class BaseTrainer(Trainer):
         extra_args: Namespace,
         train_dataset: Dataset,
         eval_dataset: Dataset,
+        compute_metrics: Callable,
     ):
-        super().__init__(model=model, args=args, train_dataset=train_dataset, eval_dataset=eval_dataset)
+        super().__init__(model=model, args=args, train_dataset=train_dataset,
+                         eval_dataset=eval_dataset, compute_metrics=compute_metrics)
         self.extra_args = extra_args
 
         # set transform
         self.set_image_transform()
 
+        # get optimizer and lr_scheduler
         self.optimizer = self.create_optimizer()
         self.lr_scheduler = self.create_scheduler(self.args.max_steps, optimizer=self.optimizer)
 
