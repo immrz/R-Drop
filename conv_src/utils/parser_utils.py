@@ -25,7 +25,7 @@ def parse_args() -> Tuple[TrainingArguments, Namespace]:
     parser.add_argument("--dataset", choices=["cifar100"], required=True, type=str, help="Dataset to use.")
 
     parser.add_argument("--pretrained", action="store_true", help="Whether load pretrained model.")
-    parser.add_argument("--trainer", default="base", choices=["base", "rdrop"],
+    parser.add_argument("--trainer", default="base", choices=["base", "rdrop", "rdrop_da"],
                         type=str, help="Training strategy.")
     parser.add_argument("--dry_run", action="store_true", help="Print args and exit.")
 

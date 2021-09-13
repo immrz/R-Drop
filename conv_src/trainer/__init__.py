@@ -1,5 +1,5 @@
 from .base_trainer import BaseTrainer
-from .consistency_trainer import RDropTrainer
+from .consistency_trainer import RDropTrainer, RDropDataAugTrainer
 from transformers.trainer import EvalPrediction
 import logging
 
@@ -24,5 +24,8 @@ def get_trainer(model, args, extra_args, train_dataset, eval_dataset, compute_me
     elif extra_args.trainer == "rdrop":
         logger.info(f"Using RDrop with alpha={extra_args.alpha}.")
         return RDropTrainer(alpha=extra_args.alpha, **kwargs)
+    elif extra_args.trainer == "rdrop_da":
+        logger.info(f"Using RDropDataAug with alpha={extra_args.alpha}.")
+        return RDropDataAugTrainer(alpha=extra_args.alpha, **kwargs)
     else:
         raise NotImplementedError

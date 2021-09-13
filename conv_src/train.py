@@ -13,15 +13,12 @@ class CIFAR100(datasets.CIFAR100):
         """Return dict with a 'label' key to be compatible with huggingface Trainer.
         """
         x, y = super().__getitem__(item)
-        return {"x": x, "label": y}
+        return {"x": x, "labels": y}
 
 
 def main():
     # get args
     args, extra_args = parse_args()
-    for k, v in vars(extra_args).items():
-        print(f"{k:>40s}: {str(v):}")
-    print(args)
 
     # get model
     model = getattr(models, extra_args.model)(
@@ -43,9 +40,14 @@ def main():
         eval_dataset=eval_dataset
     )
 
-    if extra_args.dry_run:
+    if args.local_rank in [-1, 0]:
+        print(args)
+        for k, v in vars(extra_args).items():
+            print(f"{k:>40s}: {str(v):}")
         print(model)
         print(trainer)
+
+    if extra_args.dry_run:
         return
 
     # train

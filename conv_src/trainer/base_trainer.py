@@ -1,6 +1,7 @@
 import torch.nn as nn
 from torch.utils.data import Dataset
 from torchvision import transforms
+from torch.utils.data.dataloader import default_collate
 
 from transformers.trainer import Trainer, TrainingArguments
 from timm.optim import create_optimizer_v2
@@ -20,7 +21,8 @@ class BaseTrainer(Trainer):
         compute_metrics: Callable,
     ):
         super().__init__(model=model, args=args, train_dataset=train_dataset,
-                         eval_dataset=eval_dataset, compute_metrics=compute_metrics)
+                         eval_dataset=eval_dataset, compute_metrics=compute_metrics,
+                         data_collator=default_collate)
         self.extra_args = extra_args
 
         # set transform
