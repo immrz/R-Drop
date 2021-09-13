@@ -52,3 +52,6 @@ class BaseTrainer(Trainer):
                                                  weight_decay=self.args.weight_decay,
                                                  momentum=self.extra_args.momentum)
         return self.optimizer
+
+    def __repr__(self):
+        return self.__class__.__name__

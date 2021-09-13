@@ -25,7 +25,8 @@ def parse_args() -> Tuple[TrainingArguments, Namespace]:
     parser.add_argument("--dataset", choices=["cifar100"], required=True, type=str, help="Dataset to use.")
 
     parser.add_argument("--pretrained", action="store_true", help="Whether load pretrained model.")
-    parser.add_argument("--trainer", default="base", type=str, help="Training strategy.")
+    parser.add_argument("--trainer", default="base", choices=["base", "rdrop"],
+                        type=str, help="Training strategy.")
     parser.add_argument("--dry_run", action="store_true", help="Print args and exit.")
 
     parser.add_argument("--opt", default="sgd", type=str, metavar="OPTIMIZER",
@@ -33,12 +34,12 @@ def parse_args() -> Tuple[TrainingArguments, Namespace]:
     parser.add_argument("--momentum", type=float, default=0.9, metavar="M",
                         help="Optimizer momentum (default: 0.9)")
 
-    parser.add_argument("--survival_prob", default=0.8, type=float,
+    parser.add_argument("--survival_prob", default=0.5, type=float,
                         help="Survival prob of the last layer if stochastic depth is used.")
     parser.add_argument("--consistency", default=None, type=str, choices=["prob", "logit", "hidden"],
                         help="Whether and where to put consistency loss.")
     parser.add_argument("--stop_grad", action="store_true", help="Whether stop grad for the good submodel.")
-    parser.add_argument("--alpha", default=1.0, type=float, help="Weight for consistency loss.")
+    parser.add_argument("--alpha", default=2.0, type=float, help="Weight for consistency loss.")
 
     # add consistency loss type
     args, _ = parser.parse_known_args()

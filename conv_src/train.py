@@ -22,8 +22,6 @@ def main():
     for k, v in vars(extra_args).items():
         print(f"{k:>40s}: {str(v):}")
     print(args)
-    if extra_args.dry_run:
-        return
 
     # get model
     model = getattr(models, extra_args.model)(
@@ -44,6 +42,11 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=eval_dataset
     )
+
+    if extra_args.dry_run:
+        print(model)
+        print(trainer)
+        return
 
     # train
     trainer.train()
