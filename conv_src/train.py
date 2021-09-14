@@ -6,9 +6,6 @@ from torchvision import datasets
 
 
 class CIFAR100(datasets.CIFAR100):
-    def __init__(self, root=None, train=False, download=False):
-        super().__init__(root=root, train=train, download=download)
-
     def __getitem__(self, item):
         """Return dict with a 'label' key to be compatible with huggingface Trainer.
         """
