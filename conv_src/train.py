@@ -1,4 +1,5 @@
 from utils.parser_utils import parse_args
+from utils.utils import set_seed
 from trainer import get_trainer
 import models
 
@@ -16,6 +17,9 @@ class CIFAR100(datasets.CIFAR100):
 def main():
     # get args
     args, extra_args = parse_args()
+
+    # set seed
+    set_seed(args.seed)
 
     # get model
     model = getattr(models, extra_args.model)(
