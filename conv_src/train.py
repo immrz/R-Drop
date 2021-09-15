@@ -4,6 +4,7 @@ from trainer import get_trainer
 import models
 
 from torchvision import datasets
+import os
 
 
 class CIFAR100(datasets.CIFAR100):
@@ -29,8 +30,9 @@ def main():
     )
 
     # get datasets
-    train_dataset = CIFAR100(root="data", train=True, download=True)
-    eval_dataset = CIFAR100(root="data", train=False, download=True)
+    data_root = os.environ.get("AMLT_DATA_DIR", "data")
+    train_dataset = CIFAR100(root=data_root, train=True, download=True)
+    eval_dataset = CIFAR100(root=data_root, train=False, download=True)
 
     # setup trainer
     trainer = get_trainer(
