@@ -26,6 +26,7 @@ then
     python -m torch.distributed.launch --nproc_per_node=${ngpu} train.py \
         --data_dir "${data_dir}" \
         --output_dir "${output_dir}" \
+        --aug_type cifar \
         --pretrained ${prt} \
         --model_type ${mt} \
         --dataset ${ds} \
@@ -44,6 +45,7 @@ else
     python train.py \
         --data_dir "${data_dir}" \
         --output_dir "${output_dir}" \
+        --aug_type cifar \
         --pretrained ${prt} \
         --model_type ${mt} \
         --dataset ${ds} \

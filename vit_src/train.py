@@ -21,7 +21,7 @@ import models
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader
 from utils.utils import AverageMeter, bool_flag, simple_accuracy, \
-    save_model, count_parameters, set_seed
+    save_model, count_parameters, set_seed, move_to_device
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ def valid(args, model, writer, test_loader, global_step):
                           disable=args.disable_tqdm or args.local_rank not in [-1, 0])
     loss_fct = torch.nn.CrossEntropyLoss()
     for step, batch in enumerate(epoch_iterator):
-        batch = tuple(t.to(args.device) for t in batch)
+        batch = move_to_device(batch, args.device)
         x, y = batch
         with torch.no_grad():
             logits = model(x)[0]
@@ -193,7 +193,7 @@ def train(args, model):
                               dynamic_ncols=True,
                               disable=args.disable_tqdm or args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
-            batch = tuple(t.to(args.device) for t in batch)
+            batch = move_to_device(batch, args.device)
             x, y = batch
 
             with amp.autocast(enabled=args.fp16):
@@ -336,6 +336,10 @@ def main():
 
     # disable tqdm if on itp server
     args.disable_tqdm = "AMLT_OUTPUT_DIR" in os.environ
+
+    # must use two augmentations if wrapper is twoaug
+    if args.wrapper in ["twoaug"]:
+        args.two_aug = True
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1:

@@ -97,3 +97,14 @@ def display_resnet_layers(net):
             print(block)
     _draw_border()
     print(net.fc)
+
+
+def move_to_device(x, device):
+    if isinstance(x, torch.Tensor):
+        return x.to(device)
+    elif isinstance(x, (tuple, list)):
+        return type(x)(move_to_device(xi, device) for xi in x)
+    elif isinstance(x, dict):
+        return type(x)(**{k: move_to_device(v, device) for k, v in x.items()})
+    else:
+        raise NotImplementedError
