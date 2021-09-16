@@ -2,9 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-import logging
-
-logger = logging.getLogger(__name__)
 
 
 class ConsistencyWrapper(nn.Module):
@@ -23,7 +20,10 @@ class ConsistencyWrapper(nn.Module):
         return self.model.state_dict()
 
     def __repr__(self):
-        return f"{self.__class__.__name__}(alpha={self.alpha})" + "\n" + repr(self.model)
+        return self.__str__() + "\n" + repr(self.model)
+
+    def __str__(self):
+        return f"{self.__class__.__name__}(alpha={self.alpha})"
 
 
 class RDropWrapper(ConsistencyWrapper):
@@ -45,8 +45,6 @@ class RDropWrapper(ConsistencyWrapper):
         self.stop_grad = stop_grad
 
         assert self.consistency is not None and self.consist_func is not None
-        logger.info(f"Consistency loss is imposed on {consistency} with alpha={alpha}, "
-                    f"stop_grad={stop_grad}, function={consist_func}.")
 
     def compute_consistency_loss(self, z1: Tensor, z2: Tensor) -> Tensor:
         """Compute consistency loss between two outputs.
@@ -123,3 +121,7 @@ class RDropWrapper(ConsistencyWrapper):
 
         else:
             return self.model(x, labels=labels)
+
+    def __str__(self):
+        return f"{self.__class__.__name__}(alpha={self.alpha}, consistency={self.consistency}, " \
+               f"consist_func={self.consist_func}, stop_grad={self.stop_grad})"

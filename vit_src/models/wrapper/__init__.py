@@ -1,5 +1,6 @@
 from .rdrop import RDropWrapper
 from .two_aug import TwoAugWrapper
+from .rdrop_da import RDropDAWrapper
 from torch.nn import Module
 
 
@@ -23,5 +24,9 @@ def get_wrapper(
         return TwoAugWrapper(model=model,
                              consistency=consistency is not None,
                              alpha=alpha)
+    elif wrapper == "rdropDA":
+        return RDropDAWrapper(model=model,
+                              consistency=consistency,
+                              alpha=alpha)
     else:
         raise NotImplementedError

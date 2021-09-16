@@ -4,9 +4,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from typing import Tuple, Union
-import logging
-
-logger = logging.getLogger(__name__)
 
 
 def bidirectional_kl_divergence(z1, z2):
@@ -52,3 +49,6 @@ class TwoAugWrapper(ConsistencyWrapper):
                 return cls_loss
         else:
             return self.model(x, labels=labels)
+
+    def __str__(self):
+        return f"{self.__class__.__name__}(consistency={self.consistency}, alpha={self.alpha})"

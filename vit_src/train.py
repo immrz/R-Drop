@@ -375,7 +375,7 @@ def main():
     if args.local_rank in [-1, 0]:
         for k, v in vars(args).items():
             print(f"{k:>40s}: {str(v)}")
-        print(model)
+        print(repr(model))
         print(f"Number of parameters of the model: {count_parameters(model):.1f}M")
     if args.dry_run:
         return
