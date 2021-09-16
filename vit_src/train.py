@@ -16,13 +16,12 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.cuda.amp as amp
 
 from models.modeling import VisionTransformer, CONFIGS
-import models.resnet as resnet
-import models.efficientnet as effnet
+import models
+
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader
 from utils.utils import AverageMeter, bool_flag, simple_accuracy, \
     save_model, count_parameters, set_seed
-
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +46,7 @@ def setup_effnet(args):
     if args.dataset == "imagenet":
         num_classes = 1000
 
-    model = getattr(effnet, args.model_type)(
+    model = getattr(models, args.model_type)(
         pretrained=args.pretrained,
         num_classes=num_classes,
         dropout_prob=args.dropout_prob,
@@ -67,18 +66,22 @@ def setup_ResNet(args):
     if args.dataset == "imagenet":
         num_classes=1000
 
-    model = getattr(resnet, args.model_type)(
+    model = getattr(models, args.model_type)(
         pretrained=args.pretrained,
         probs=(args.prob_start, args.prob_end) if args.stoch_depth else (1, 1),
         num_classes=num_classes,
+    )
+    wrapped = models.get_wrapper(
+        wrapper=args.wrapper,
+        model=model,
         consistency=args.consistency,
         consist_func=args.consist_func,
         alpha=args.alpha,
         stop_grad=args.stop_grad,
     )
 
-    model.to(args.device)
-    return args, model
+    wrapped.to(args.device)
+    return args, wrapped
 
 
 def valid(args, model, writer, test_loader, global_step):
@@ -266,8 +269,12 @@ def main():
                         help="Which variant to use.")
     parser.add_argument("--pretrained_dir", type=str, default="checkpoint/ViT-B_16.npz",
                         help="Where to search for pretrained ViT models.")
-    parser.add_argument("--output_dir", default=os.environ.get("AMLT_OUTPUT_DIR", "output"), type=str,
+    parser.add_argument("--data_dir", required=True, type=str,
+                        help="The root of the datasets.")
+    parser.add_argument("--output_dir", default="output", type=str,
                         help="The output directory where checkpoints will be written.")
+    parser.add_argument("--pretrained", type=bool_flag, default=True, const=True, nargs="?",
+                        help="Whether load pretrained model from url.")
 
     parser.add_argument("--aug_type", type=str, choices=["cifar"], default=None,
                         help="Type of data augmentation to use.")
@@ -283,12 +290,25 @@ def main():
                         help="Run prediction on validation set every so many steps."
                              "Will always run one evaluation at the end of training.")
 
+    # stochastic depth & dropout args
     parser.add_argument("--dropout_prob", type=float, default=0.1)
     parser.add_argument("--stoch_depth", type=bool_flag, default=True, const=True, nargs="?",
                         help="Whether to use stochastic depth.")
     parser.add_argument("--prob_start", type=float, default=1., help="Survival probability of the first layer.")
     parser.add_argument("--prob_end", type=float, default=0.5, help="Survial probability of the last layer.")
 
+    # wrapper args
+    parser.add_argument("--wrapper", type=str, default=None, choices=["rdrop", "twoaug", "rdropDA"],
+                        help="How to train the model. Default is None, i.e., train as usual.")
+    parser.add_argument("--alpha", default=0.3, type=float,
+                        help="alpha for kl loss")
+    parser.add_argument("--consistency", default=None, type=str, nargs="?", const="prob",
+                        choices=["prob", "logit", "hidden"], help="Whether and where to put consistency loss.")
+    parser.add_argument("--consist_func", default=None, type=str, choices=["kl", "js", "ce", "cosine", "l2"],
+                        help="Type of divergence function if consistency is adopted.")
+    parser.add_argument("--stop_grad", action="store_true", help="Whether stop grad for the good submodel.")
+
+    # optimizer args
     parser.add_argument("--learning_rate", default=1e-2, type=float,
                         help="The initial learning rate for SGD.")
     parser.add_argument("--weight_decay", default=0, type=float,
@@ -301,13 +321,6 @@ def main():
                         help="Step of training to perform learning rate warmup for.")
     parser.add_argument("--max_grad_norm", default=1.0, type=float,
                         help="Max gradient norm.")
-    parser.add_argument("--consistency", default=None, type=str, choices=["prob", "logit", "hidden"],
-                        help="whether and where to put consistency loss")
-    parser.add_argument("--alpha", default=0.3, type=float,
-                        help="alpha for kl loss")
-    parser.add_argument("--stop_grad", action="store_true", help="Whether stop grad for the good submodel.")
-    parser.add_argument("--pretrained", type=bool_flag, default=True, const=True, nargs="?",
-                        help="Whether load pretrained model from url.")
 
     parser.add_argument("--local_rank", type=int, default=-1,
                         help="local_rank for distributed training on gpus")
@@ -319,20 +332,10 @@ def main():
                         help="Whether to use 16-bit float precision instead of 32-bit")
     parser.add_argument("--dry_run", action="store_true", help="Display model and exit.")
 
-    # add consistency type args
-    args, _ = parser.parse_known_args()
-    if args.consistency == "prob":
-        parser.add_argument("--consist_func", default="kl", type=str, choices=["kl", "js", "ce"],
-                            help="Type of divergence function if consistency is set to prob.")
-    elif args.consistency in ["logit", "hidden"]:
-        parser.add_argument("--consist_func", default="cosine", type=str, choices=["cosine", "l2"],
-                            help="Type of divergence function if consistency is set to hidden or logit.")
-    else:
-        parser.set_defaults(consist_func=None)
     args = parser.parse_args()
 
     # disable tqdm if on itp server
-    args.disable_tqdm = 'AMLT_DATA_DIR' in os.environ
+    args.disable_tqdm = "AMLT_OUTPUT_DIR" in os.environ
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1:

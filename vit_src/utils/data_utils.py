@@ -20,27 +20,26 @@ def get_loader(args, transform=None):
         transform_train, transform_test = get_transform(args.aug_type, args.img_size, two_aug=args.two_aug)
 
     if args.dataset == "cifar10":
-        trainset = datasets.CIFAR10(root="./data",
+        trainset = datasets.CIFAR10(root=args.data_dir,
                                     train=True,
                                     download=True,
                                     transform=transform_train)
-        testset = datasets.CIFAR10(root="./data",
+        testset = datasets.CIFAR10(root=args.data_dir,
                                    train=False,
                                    download=True,
                                    transform=transform_test) if args.local_rank in [-1, 0] else None
 
     elif args.dataset == "imagenet":
-        trainset = datasets.ImageFolder(root='ILSVRC2012/train', transform=transform_train)
-
-        testset = datasets.ImageFolder(root='ILSVRC2012/val', transform=transform_test) \
+        trainset = datasets.ImageFolder(root=os.path.join(args.data_dir, "trainset"), transform=transform_train)
+        testset = datasets.ImageFolder(root=os.path.join(args.data_dir, "val"), transform=transform_test) \
             if args.local_rank in [-1, 0] else None
 
     else:
-        trainset = datasets.CIFAR100(root="./data",
+        trainset = datasets.CIFAR100(root=args.data_dir,
                                      train=True,
                                      download=True,
                                      transform=transform_train)
-        testset = datasets.CIFAR100(root="./data",
+        testset = datasets.CIFAR100(root=args.data_dir,
                                     train=False,
                                     download=True,
                                     transform=transform_test) if args.local_rank in [-1, 0] else None

@@ -3,12 +3,11 @@ from timm.data import resolve_data_config
 from timm.data.transforms_factory import create_transform
 
 from torch import Tensor
-from models.stoch_depth import StochDepthConsistencyBase
+import torch.nn as nn
+from typing import Union, Tuple
 
-from typing import Any, Tuple
 
-
-class EffNetV2(StochDepthConsistencyBase):
+class EffNetV2(nn.Module):
     def __init__(
         self,
         variant: str,
@@ -16,10 +15,9 @@ class EffNetV2(StochDepthConsistencyBase):
         num_classes: int = 1000,
         dropout_prob: float = 0.1,
         survival_prob: float = 0.8,
-        **kwargs: Any,
     ) -> None:
 
-        super().__init__(prob_start=1, prob_end=survival_prob, **kwargs)
+        super().__init__()
 
         self.dropout_prob = dropout_prob
         self.survival_prob = survival_prob
@@ -28,6 +26,7 @@ class EffNetV2(StochDepthConsistencyBase):
                                      num_classes=num_classes,
                                      drop_rate=self.dropout_prob,
                                      drop_path_rate=1 - self.survival_prob)
+        self.ce = nn.CrossEntropyLoss()
 
         self.embedding = None
         self.net.global_pool.register_forward_hook(self.get_emb_hook())
@@ -42,9 +41,13 @@ class EffNetV2(StochDepthConsistencyBase):
             self.embedding = output
         return hook
 
-    def _forward_impl(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, x: Tensor, labels: Tensor = None) -> Union[Tensor, Tuple[Tensor, Tensor]]:
         logits = self.net(x)
-        return logits, self.embedding
+        if labels is not None:
+            loss = self.ce(logits, labels)
+            return loss
+        else:
+            return logits, self.embedding
 
 
 def efficientnetv2_m(**kwargs):

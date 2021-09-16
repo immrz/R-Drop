@@ -4,3 +4,5 @@ from .resnet import (
     resnet110,
     resnet152,
 )
+from .efficientnet import efficientnetv2_m
+from .wrapper import get_wrapper

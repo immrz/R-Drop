@@ -7,9 +7,28 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class RDropWrapper(nn.Module):
-    """Wrapper of model. Will train the wrapped model with RDrop. That is,
-    forward the input twice, and force the consistency between the two outputs.
+class ConsistencyWrapper(nn.Module):
+    """Wrap the model with some training algorithm.
+    alpha: The weight of the consistency loss if existing.
+
+    NOTE: `forward` should return what `model` returns during testing,
+    and return loss, which is either a scalar or a dictionary, during training.
+    """
+    def __init__(self, model: nn.Module, alpha: float):
+        super().__init__()
+        self.model = model
+        self.alpha = alpha
+
+    def state_dict(self, destination=None, prefix="", keep_vars=False):
+        return self.model.state_dict()
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(alpha={self.alpha})" + "\n" + repr(self.model)
+
+
+class RDropWrapper(ConsistencyWrapper):
+    """Train the wrapped model with RDrop. That is, forward the input twice,
+    and force the consistency between the two outputs.
     """
     def __init__(
         self,
@@ -20,11 +39,9 @@ class RDropWrapper(nn.Module):
         stop_grad: bool = False,
     ) -> None:
 
-        super().__init__()
-        self.model = model
+        super().__init__(model=model, alpha=alpha)
         self.consistency = consistency
         self.consist_func = consist_func
-        self.alpha = alpha
         self.stop_grad = stop_grad
 
         assert self.consistency is not None and self.consist_func is not None
@@ -77,9 +94,9 @@ class RDropWrapper(nn.Module):
 
     def forward(self, x: Tensor, labels: Tensor = None):
         """If training, `labels` will be given, and `x` will be forwarded twice. Return the losses.
-        If testing, `labels` is unavailable, return the logits and hidden embedding instead.
+        If testing, return the outputs of `model` instead.
         """
-        if labels is not None:
+        if self.training:
             # double the inputs and forward
             bs = x.shape[0]  # original batch size
             x, labels = torch.cat([x, x.clone()], dim=0), torch.cat([labels, labels.clone()], dim=0)
@@ -105,4 +122,4 @@ class RDropWrapper(nn.Module):
             return {"cls": cls_loss.item(), "csst": consist_loss.item(), "agg": agg_loss}
 
         else:
-            return self.model(x)
+            return self.model(x, labels=labels)
