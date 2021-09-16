@@ -3,6 +3,15 @@
 output_dir="${AMLT_OUTPUT_DIR:-output}"
 ngpu=${NPROC_PER_NODE:-1}
 
+if [ -z ${AMLT_OUTPUT_DIR+x} ]
+then
+    # on local machine
+    nworker=4
+else
+    # on ITP server
+    nworker=32
+fi
+
 echo "Using ${ngpu} GPUs."
 
 if [ ${ngpu} -gt 1 ]
@@ -24,7 +33,7 @@ then
         --logging_steps 1 \
         --save_strategy epoch \
         --fp16 True \
-        --dataloader_num_workers 8 \
+        --dataloader_num_workers ${nworker} \
         --disable_tqdm True \
         --report_to tensorboard \
         --load_best_model_at_end True $@
@@ -45,7 +54,7 @@ else
         --logging_steps 1 \
         --save_strategy epoch \
         --fp16 True \
-        --dataloader_num_workers 8 \
+        --dataloader_num_workers ${nworker} \
         --disable_tqdm True \
         --report_to tensorboard \
         --load_best_model_at_end True $@

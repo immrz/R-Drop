@@ -1,5 +1,4 @@
-from models.stoch_depth import StochDepthBasicBlock, \
-    StochDepthBottleneck, StochDepthConsistencyBase, conv1x1
+from .stoch_depth import StochDepthBasicBlock, StochDepthBottleneck, conv1x1
 from typing import Type, Any, Callable, Union, List, Tuple, Optional
 
 import torch
@@ -8,9 +7,6 @@ import torch.utils.model_zoo as model_zoo
 from torch import Tensor
 
 import logging
-
-
-__all__ = ["resnet50", "resnet152", "resnet110", "wide_resnet101_2"]
 
 
 logger = logging.getLogger(__name__)
@@ -46,7 +42,7 @@ def init_weight(net: nn.Module, zero_init_residual: bool = False):
                 nn.init.constant_(m.bn2.weight, 0)  # type: ignore[arg-type]
 
 
-class ResNet(StochDepthConsistencyBase):
+class ResNet(nn.Module):
     """The commonly used ResNet architecture, but with stochastic depth and consistency loss.
     """
     def __init__(
@@ -60,12 +56,12 @@ class ResNet(StochDepthConsistencyBase):
         replace_stride_with_dilation: Optional[List[bool]] = None,
         norm_layer: Optional[Callable[..., nn.Module]] = None,
         probs: Tuple[float, float] = (1, 0.5),
-        **kwargs: Any,
     ) -> None:
 
-        super().__init__(prob_start=probs[0], prob_end=probs[1], **kwargs)
+        super().__init__()
         self.prob_now = probs[0]
         self.prob_step = (probs[0] - probs[1]) / (sum(layers) - 1)
+        logger.info(f"prob_keep starts from {probs[0]} to {probs[1]}")
 
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -96,6 +92,7 @@ class ResNet(StochDepthConsistencyBase):
                                        dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
+        self.ce = nn.CrossEntropyLoss()
 
         # initialize weight
         init_weight(self, zero_init_residual=zero_init_residual)
@@ -129,7 +126,7 @@ class ResNet(StochDepthConsistencyBase):
 
         return nn.Sequential(*layers)
 
-    def _forward_impl(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, x: Tensor, labels: Tensor = None) -> Union[Tensor, Tuple[Tensor, Tensor]]:
         # See note [TorchScript super()]
         x = self.conv1(x)
         x = self.bn1(x)
@@ -145,10 +142,14 @@ class ResNet(StochDepthConsistencyBase):
         z = torch.flatten(x, 1)
         x = self.fc(z)
 
-        return x, z
+        if labels is not None:
+            loss = self.ce(x, labels)
+            return loss
+        else:
+            return x, z
 
 
-class ThreeLayerResNet(StochDepthConsistencyBase):
+class ThreeLayerResNet(nn.Module):
     """The three-layer ResNet specialized for CIFAR10/100 dataset.
     """
     def __init__(
@@ -158,12 +159,12 @@ class ThreeLayerResNet(StochDepthConsistencyBase):
         num_classes: int = 1000,
         zero_init_residual: bool = False,
         probs: Tuple[float, float] = (1, 0.5),
-        **kwargs: Any,
     ) -> None:
 
-        super().__init__(prob_start=probs[0], prob_end=probs[1], **kwargs)
+        super().__init__()
         self.prob_now = probs[0]
         self.prob_step = (probs[0] - probs[1]) / (sum(layers) - 1)
+        logger.info(f"prob_keep starts from {probs[0]} to {probs[1]}")
         self.inplanes = 16
 
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
@@ -174,6 +175,7 @@ class ThreeLayerResNet(StochDepthConsistencyBase):
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(64, num_classes)
+        self.ce = nn.CrossEntropyLoss()
 
         # initialize weight
         init_weight(self, zero_init_residual=zero_init_residual)
@@ -196,7 +198,7 @@ class ThreeLayerResNet(StochDepthConsistencyBase):
 
         return nn.Sequential(*layers)
 
-    def _forward_impl(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+    def forward(self, x: Tensor, labels: Tensor = None) -> Union[Tensor, Tuple[Tensor, Tensor]]:
         x = self.relu(self.bn1(self.conv1(x)))
 
         x = self.layer1(x)
@@ -207,7 +209,11 @@ class ThreeLayerResNet(StochDepthConsistencyBase):
         z = torch.flatten(x, 1)
         x = self.fc(z)
 
-        return x, z
+        if labels is not None:
+            loss = self.ce(x, labels)
+            return loss
+        else:
+            return x, z
 
 
 def _resnet(

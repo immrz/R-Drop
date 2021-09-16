@@ -21,7 +21,7 @@ import models.efficientnet as effnet
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader
 from utils.utils import AverageMeter, bool_flag, simple_accuracy, \
-    save_model, count_parameters, set_seed, display_resnet_layers
+    save_model, count_parameters, set_seed
 
 
 logger = logging.getLogger(__name__)
@@ -38,11 +38,7 @@ def setup_ViT(args):
     model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes, alpha=args.alpha)
     model.load_from(np.load(args.pretrained_dir))
     model.to(args.device)
-    num_params = count_parameters(model)
-
     logger.info("{}".format(config))
-    logger.info("Training parameters %s", args)
-    logger.info("Total Parameter: \t%2.1fM" % num_params)
     return args, model
 
 
@@ -63,11 +59,6 @@ def setup_effnet(args):
     )
 
     model.to(args.device)
-    num_params = count_parameters(model)
-
-    logger.info("Training parameters %s", args)
-    logger.info("Total Parameter: \t%2.1fM" % num_params)
-
     return args, model
 
 
@@ -87,14 +78,6 @@ def setup_ResNet(args):
     )
 
     model.to(args.device)
-    num_params = count_parameters(model)
-
-    logger.info("Training parameters %s", args)
-    logger.info("Total Parameter: \t%2.1fM" % num_params)
-
-    if args.dry_run and args.local_rank in [-1, 0]:
-        print('parameters:')
-        display_resnet_layers(model)
     return args, model
 
 
@@ -286,6 +269,10 @@ def main():
     parser.add_argument("--output_dir", default=os.environ.get("AMLT_OUTPUT_DIR", "output"), type=str,
                         help="The output directory where checkpoints will be written.")
 
+    parser.add_argument("--aug_type", type=str, choices=["cifar"], default=None,
+                        help="Type of data augmentation to use.")
+    parser.add_argument("--two_aug", type=bool_flag, nargs="?", default=False, const=True,
+                        help="Create two augmentations in a batch.")
     parser.add_argument("--img_size", default=384, type=int,
                         help="Resolution size")
     parser.add_argument("--train_batch_size", default=512, type=int,
@@ -377,6 +364,12 @@ def main():
     else:
         args, model = setup_ResNet(args)
 
+    # log args and model
+    if args.local_rank in [-1, 0]:
+        for k, v in vars(args).items():
+            print(f"{k:>40s}: {str(v)}")
+        print(model)
+        print(f"Number of parameters of the model: {count_parameters(model):.1f}M")
     if args.dry_run:
         return
 

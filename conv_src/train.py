@@ -46,7 +46,7 @@ def main():
     if args.local_rank in [-1, 0]:
         print(args)
         for k, v in vars(extra_args).items():
-            print(f"{k:>40s}: {str(v):}")
+            print(f"{k:>40s}: {str(v)}")
         print(model)
         print(trainer)
 
