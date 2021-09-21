@@ -277,28 +277,34 @@ class VisionTransformer(nn.Module):
         x1, attn_weights1, hidden_state1 = self.transformer(x)
 
         logits = self.head(x1[:, 0])
-
         if labels is not None:
             loss_fct = CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, self.num_classes), labels.view(-1))
-
-            x2, attn_weights2, hidden_state2 = self.transformer(x)
-            newlogits = self.head(x2[:, 0])
-            loss2 = loss_fct(newlogits.view(-1, self.num_classes), labels.view(-1))
-            loss+=loss2
-
-            p = torch.log_softmax(logits.view(-1, self.num_classes), dim=-1)
-            p_tec = torch.softmax(logits.view(-1, self.num_classes), dim=-1)
-            q = torch.log_softmax(newlogits.view(-1, self.num_classes), dim=-1)
-            q_tec = torch.softmax(newlogits.view(-1, self.num_classes), dim=-1)
-            kl_loss = torch.nn.functional.kl_div(p, q_tec, reduction='none').sum()
-            reverse_kl_loss = torch.nn.functional.kl_div(q, p_tec, reduction='none').sum()
-
-            loss += self.alpha * (kl_loss + reverse_kl_loss)
-
+            loss = loss_fct(logits, labels)
             return loss
         else:
-            return logits, attn_weights1
+            return logits, x1[:, 0]
+
+        # if labels is not None:
+        #     loss_fct = CrossEntropyLoss()
+        #     loss = loss_fct(logits.view(-1, self.num_classes), labels.view(-1))
+
+        #     x2, attn_weights2, hidden_state2 = self.transformer(x)
+        #     newlogits = self.head(x2[:, 0])
+        #     loss2 = loss_fct(newlogits.view(-1, self.num_classes), labels.view(-1))
+        #     loss+=loss2
+
+        #     p = torch.log_softmax(logits.view(-1, self.num_classes), dim=-1)
+        #     p_tec = torch.softmax(logits.view(-1, self.num_classes), dim=-1)
+        #     q = torch.log_softmax(newlogits.view(-1, self.num_classes), dim=-1)
+        #     q_tec = torch.softmax(newlogits.view(-1, self.num_classes), dim=-1)
+        #     kl_loss = torch.nn.functional.kl_div(p, q_tec, reduction='none').sum()
+        #     reverse_kl_loss = torch.nn.functional.kl_div(q, p_tec, reduction='none').sum()
+
+        #     loss += self.alpha * (kl_loss + reverse_kl_loss)
+
+        #     return loss
+        # else:
+        #     return logits, attn_weights1
 
     def load_from(self, weights):
         with torch.no_grad():

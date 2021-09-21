@@ -36,9 +36,19 @@ def setup_ViT(args):
 
     model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes, alpha=args.alpha)
     model.load_from(np.load(args.pretrained_dir))
-    model.to(args.device)
+
+    wrapped = models.get_wrapper(
+        wrapper=args.wrapper,
+        model=model,
+        consistency=args.consistency,
+        consist_func=args.consist_func,
+        alpha=args.alpha,
+        stop_grad=args.stop_grad,
+    )
+
+    wrapped.to(args.device)
     logger.info("{}".format(config))
-    return args, model
+    return args, wrapped
 
 
 def setup_effnet(args):
@@ -279,7 +289,7 @@ def main():
     parser.add_argument("--aug_type", type=str, choices=["cifar"], default=None,
                         help="Type of data augmentation to use.")
     parser.add_argument("--two_aug", type=bool_flag, nargs="?", default=False, const=True,
-                        help="Create two augmentations in a batch.")
+                        help="Create two augmentations in a batch. This will be set by the program automatically.")
     parser.add_argument("--img_size", default=384, type=int,
                         help="Resolution size")
     parser.add_argument("--train_batch_size", default=512, type=int,
@@ -337,9 +347,8 @@ def main():
     # disable tqdm if on itp server
     args.disable_tqdm = "AMLT_OUTPUT_DIR" in os.environ
 
-    # must use two augmentations if wrapper is twoaug
-    if args.wrapper in ["twoaug"]:
-        args.two_aug = True
+    # must use two augmentations if wrapper is twoaug or rdropDA
+    args.two_aug = args.wrapper in ["twoaug", "rdropDA"]
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1:
