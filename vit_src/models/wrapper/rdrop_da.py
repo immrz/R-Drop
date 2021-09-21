@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from typing import Union, Tuple
+import itertools
 
 
 class RDropDAWrapper(ConsistencyWrapper):
@@ -61,3 +62,47 @@ class RDropDAWrapper(ConsistencyWrapper):
 
     def __str__(self):
         return f"{self.__class__.__name__}(consistency={self.consistency}, alpha={self.alpha})"
+
+
+class RDropDAMutualWrapper(ConsistencyWrapper):
+    def __init__(
+        self,
+        model: nn.Module,
+        alpha: float = 1.0,
+    ):
+        super().__init__(model=model, alpha=alpha)
+        self.ce = nn.CrossEntropyLoss()
+
+    def forward(self, x: Union[Tensor, Tuple[Tensor, Tensor]], labels: Tensor = None):
+        """If training, `labels` will be given, and `x` will be a list of two tensors.
+        Each x_i will be forwarded twice. Consistency loss will be computed between each pair. Return losses.
+        If testing, return the outputs of `model` instead.
+        """
+        if self.training:
+            # double each input and forward, compute classification loss
+            bs = x[0].shape[0]  # original batch size
+            x1, x2 = x
+            x = torch.cat([x1, x1.clone(), x2, x2.clone()], dim=0)
+            labels = torch.cat([labels, labels.clone(), labels.clone(), labels.clone()], dim=0)
+            logits, _ = self.model(x)
+            cls_loss = self.ce(logits, labels)
+
+            # compute consistency loss among the four outputs
+            split_log_prob = torch.split(F.log_softmax(logits, dim=1), bs, dim=0)
+            csst_loss = None
+            for _logp1, _logp2 in itertools.product(split_log_prob, repeat=2):
+                if _logp1 is _logp2:
+                    continue
+                kld = F.kl_div(_logp1, _logp2, reduction="batchmean", log_target=True)
+                if csst_loss is None:
+                    csst_loss = kld
+                else:
+                    csst_loss += kld
+
+            loss = cls_loss + self.alpha * csst_loss / 12
+            return {"cls": cls_loss.item(),
+                    "csst": csst_loss.item(),
+                    "agg": loss}
+
+        else:
+            return self.model(x, labels=labels)

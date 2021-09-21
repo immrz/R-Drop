@@ -2,9 +2,9 @@ import logging
 import os
 
 import torch
-
 from torchvision import transforms, datasets
 from torch.utils.data import DataLoader, RandomSampler, DistributedSampler, SequentialSampler
+from timm.data.auto_augment import rand_augment_transform
 
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,8 @@ def get_loader(args, transform=None):
     if transform is not None:
         transform_train, transform_test = transform
     else:
-        transform_train, transform_test = get_transform(args.aug_type, args.img_size, two_aug=args.two_aug)
+        transform_train, transform_test = get_transform(args.aug_type, args.img_size,
+                                                        two_aug=args.two_aug, rand_aug=args.rand_aug)
 
     if args.dataset == "cifar10":
         trainset = datasets.CIFAR10(root=args.data_dir,
@@ -65,7 +66,7 @@ def get_loader(args, transform=None):
     return train_loader, test_loader
 
 
-def get_transform(aug_type: str, img_size, two_aug=False):
+def get_transform(aug_type: str, img_size, two_aug=False, rand_aug=False):
     if aug_type is None:
         transform_train = transforms.Compose([
             transforms.RandomResizedCrop((img_size, img_size), scale=(0.05, 1.0)),
@@ -92,6 +93,11 @@ def get_transform(aug_type: str, img_size, two_aug=False):
 
     else:
         raise NotImplementedError
+
+    if rand_aug:
+        ra = rand_augment_transform(config_str="rand-m10-n2-mstd200",
+                                    hparams={"translate_const": 250, "img_mean": (128, 128, 128)})
+        transform_train.transforms.insert(0, ra)
 
     if two_aug:
         transform_train = TwoCropsTransform(transform_train)

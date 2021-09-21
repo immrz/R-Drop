@@ -162,6 +162,11 @@ def train(args, model):
         transform = (model.get_custom_transform(is_training=True), model.get_custom_transform(is_training=False))
     train_loader, test_loader = get_loader(args, transform=transform)
 
+    # print transforms
+    if args.local_rank in [-1, 0]:
+        print("Train transforms is:", train_loader.dataset.transforms)
+        print("Test transforms is:", test_loader.dataset.transforms)
+
     # Prepare optimizer and scheduler
     optimizer = torch.optim.SGD(model.parameters(),
                                 lr=args.learning_rate,
@@ -290,6 +295,7 @@ def main():
                         help="Type of data augmentation to use.")
     parser.add_argument("--two_aug", type=bool_flag, nargs="?", default=False, const=True,
                         help="Create two augmentations in a batch. This will be set by the program automatically.")
+    parser.add_argument("--rand_aug", action="store_true", help="Use RandAugment.")
     parser.add_argument("--img_size", default=384, type=int,
                         help="Resolution size")
     parser.add_argument("--train_batch_size", default=512, type=int,
@@ -314,7 +320,7 @@ def main():
                         help="alpha for kl loss")
     parser.add_argument("--consistency", default=None, type=str, nargs="?", const="prob",
                         choices=["prob", "logit", "hidden"], help="Whether and where to put consistency loss.")
-    parser.add_argument("--consist_func", default=None, type=str, choices=["kl", "js", "ce", "cosine", "l2"],
+    parser.add_argument("--consist_func", default=None, type=str, choices=["kl", "js", "ce", "cosine", "l2", "mutual"],
                         help="Type of divergence function if consistency is adopted.")
     parser.add_argument("--stop_grad", action="store_true", help="Whether stop grad for the good submodel.")
 
