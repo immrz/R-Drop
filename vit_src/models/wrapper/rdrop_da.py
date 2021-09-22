@@ -14,9 +14,11 @@ class RDropDAWrapper(ConsistencyWrapper):
         model: nn.Module,
         consistency: str,
         alpha: float = 1.0,
+        beta: float = 0.5,
     ):
         super().__init__(model=model, alpha=alpha)
         self.consistency = consistency
+        self.beta = beta
         self.ce = nn.CrossEntropyLoss()
         assert self.consistency in ["prob", "logit"]
 
@@ -48,7 +50,7 @@ class RDropDAWrapper(ConsistencyWrapper):
                 logp1, logp2 = p1.log(), p2.log()
                 cross_sample_csst_loss = 0.5 * (F.kl_div(logp1, p2, reduction="batchmean")
                                                 + F.kl_div(logp2, p1, reduction="batchmean"))
-            csst_loss = 0.25 * in_sample_csst_loss + 0.5 * cross_sample_csst_loss
+            csst_loss = 0.5 * (self.beta * in_sample_csst_loss + cross_sample_csst_loss)
 
             loss = cls_loss + self.alpha * csst_loss
             return {"cls": cls_loss.item(),
@@ -61,7 +63,7 @@ class RDropDAWrapper(ConsistencyWrapper):
             return self.model(x, labels=labels)
 
     def __str__(self):
-        return f"{self.__class__.__name__}(consistency={self.consistency}, alpha={self.alpha})"
+        return f"{self.__class__.__name__}(consistency={self.consistency}, alpha={self.alpha}, beta={self.beta})"
 
 
 class RDropDAMutualWrapper(ConsistencyWrapper):

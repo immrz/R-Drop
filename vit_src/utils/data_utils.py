@@ -117,3 +117,6 @@ class TwoCropsTransform:
         q = self.base_transform(x)
         k = self.base_transform(x)
         return [q, k]
+
+    def __repr__(self):
+        return "TwoCropsTransform(" + repr(self.base_transform) + ")"

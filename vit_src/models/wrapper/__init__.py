@@ -8,6 +8,7 @@ def get_wrapper(
     wrapper: str,
     model: Module,
     alpha: float = 1.0,
+    beta: float = 0.5,
     consistency: str = None,
     consist_func: str = None,
     stop_grad: bool = False,
@@ -30,6 +31,7 @@ def get_wrapper(
         else:
             return RDropDAWrapper(model=model,
                                   consistency=consistency,
-                                  alpha=alpha)
+                                  alpha=alpha,
+                                  beta=beta)
     else:
         raise NotImplementedError
