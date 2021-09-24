@@ -66,7 +66,7 @@ def get_loader(args, transform=None):
     return train_loader, test_loader
 
 
-def get_transform(aug_type: str, img_size, two_aug=False, rand_aug=False):
+def get_transform(aug_type: str, img_size, two_aug=False, rand_aug=None):
     if aug_type is None:
         transform_train = transforms.Compose([
             transforms.RandomResizedCrop((img_size, img_size), scale=(0.05, 1.0)),
@@ -94,8 +94,8 @@ def get_transform(aug_type: str, img_size, two_aug=False, rand_aug=False):
     else:
         raise NotImplementedError
 
-    if rand_aug:
-        ra = rand_augment_transform(config_str="rand-m10-n2-mstd200",
+    if rand_aug is not None:
+        ra = rand_augment_transform(config_str=rand_aug,
                                     hparams={"translate_const": 250, "img_mean": (128, 128, 128)})
         transform_train.transforms.insert(0, ra)
 

@@ -297,7 +297,7 @@ def main():
                         help="Type of data augmentation to use.")
     parser.add_argument("--two_aug", type=bool_flag, nargs="?", default=False, const=True,
                         help="Create two augmentations in a batch. This will be set by the program automatically.")
-    parser.add_argument("--rand_aug", action="store_true", help="Use RandAugment.")
+    parser.add_argument("--rand_aug", default=None, type=str, help="RandAugment config string.")
     parser.add_argument("--img_size", default=384, type=int,
                         help="Resolution size")
     parser.add_argument("--train_batch_size", default=512, type=int,
