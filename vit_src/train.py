@@ -20,6 +20,7 @@ import models
 
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
 from utils.data_utils import get_loader
+from utils.semi_data_utils import get_uda_loader
 from utils.utils import AverageMeter, bool_flag, simple_accuracy, \
     save_model, count_parameters, set_seed, move_to_device
 
@@ -162,7 +163,11 @@ def train(args, model):
         transform = None
     else:
         transform = (model.get_custom_transform(is_training=True), model.get_custom_transform(is_training=False))
-    train_loader, test_loader = get_loader(args, transform=transform)
+
+    if args.wrapper == "uda":
+        train_loader, test_loader = get_uda_loader(args)
+    else:
+        train_loader, test_loader = get_loader(args, transform=transform)
 
     # print transforms
     if args.local_rank in [-1, 0]:
@@ -316,7 +321,7 @@ def main():
     parser.add_argument("--prob_end", type=float, default=0.5, help="Survial probability of the last layer.")
 
     # wrapper args
-    parser.add_argument("--wrapper", type=str, default=None, choices=["rdrop", "twoaug", "rdropDA"],
+    parser.add_argument("--wrapper", type=str, default=None, choices=["rdrop", "twoaug", "rdropDA", "uda"],
                         help="How to train the model. Default is None, i.e., train as usual.")
     parser.add_argument("--alpha", default=0.3, type=float,
                         help="alpha for kl loss")
@@ -358,7 +363,7 @@ def main():
     args.disable_tqdm = "AMLT_OUTPUT_DIR" in os.environ
 
     # must use two augmentations if wrapper is twoaug or rdropDA
-    args.two_aug = args.wrapper in ["twoaug", "rdropDA"]
+    args.two_aug = args.wrapper in ["twoaug", "rdropDA", "uda"]
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1:

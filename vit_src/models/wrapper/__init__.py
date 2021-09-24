@@ -1,6 +1,7 @@
 from .rdrop import RDropWrapper
 from .two_aug import TwoAugWrapper
 from .rdrop_da import RDropDAWrapper, RDropDAMutualWrapper
+from .semi_supv import SemiSupvWrapper
 from torch.nn import Module
 
 
@@ -33,5 +34,10 @@ def get_wrapper(
                                   consistency=consistency,
                                   alpha=alpha,
                                   beta=beta)
+    elif wrapper == "uda":
+        return SemiSupvWrapper(model=model,
+                               alpha=alpha,
+                               beta=beta,
+                               rdrop=consistency is not None)
     else:
         raise NotImplementedError
