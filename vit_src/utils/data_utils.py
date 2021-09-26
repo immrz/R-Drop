@@ -4,7 +4,7 @@ import os
 import torch
 from torchvision import transforms, datasets
 from torch.utils.data import DataLoader, RandomSampler, DistributedSampler, SequentialSampler
-from timm.data.auto_augment import rand_augment_transform
+from timm.data.auto_augment import rand_augment_transform, augment_and_mix_transform
 
 
 logger = logging.getLogger(__name__)
@@ -68,8 +68,20 @@ def get_loader(args, transform=None):
 
 def get_transform(aug_type: str, img_size, two_aug=False, rand_aug=None):
     if aug_type is None:
+        # determine the augmentation to use
+        if rand_aug is None:
+            # default augmentation
+            aug = [transforms.RandomResizedCrop((img_size, img_size), scale=(0.05, 1.0))]
+        elif rand_aug.startswith("augmix"):
+            # AugMix
+            aug = [transforms.Resize((img_size, img_size)),
+                   augment_and_mix_transform(config_str=rand_aug, hparams={})]
+        else:
+            # RandAugment
+            aug = [transforms.Resize((img_size, img_size)),
+                   rand_augment_transform(config_str=rand_aug, hparams={})]
         transform_train = transforms.Compose([
-            transforms.RandomResizedCrop((img_size, img_size), scale=(0.05, 1.0)),
+            *aug,
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
         ])
@@ -93,11 +105,6 @@ def get_transform(aug_type: str, img_size, two_aug=False, rand_aug=None):
 
     else:
         raise NotImplementedError
-
-    if rand_aug is not None:
-        ra = rand_augment_transform(config_str=rand_aug,
-                                    hparams={"translate_const": 250, "img_mean": (128, 128, 128)})
-        transform_train.transforms.insert(0, ra)
 
     if two_aug:
         transform_train = TwoCropsTransform(transform_train)

@@ -326,7 +326,7 @@ def main():
     parser.add_argument("--alpha", default=0.3, type=float,
                         help="alpha for kl loss")
     parser.add_argument("--beta", default=0.5, type=float,
-                        help="Weight of in-sample-consistency-loss if rdropDA is used.")
+                        help="Weight of cross-sample-consistency-loss if rdropDA is used.")
     parser.add_argument("--consistency", default=None, type=str, nargs="?", const="prob",
                         choices=["prob", "logit", "hidden"], help="Whether and where to put consistency loss.")
     parser.add_argument("--consist_func", default=None, type=str, choices=["kl", "js", "ce", "cosine", "l2", "mutual"],

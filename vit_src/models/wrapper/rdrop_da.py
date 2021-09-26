@@ -50,9 +50,10 @@ class RDropDAWrapper(ConsistencyWrapper):
                 logp1, logp2 = p1.log(), p2.log()
                 cross_sample_csst_loss = 0.5 * (F.kl_div(logp1, p2, reduction="batchmean")
                                                 + F.kl_div(logp2, p1, reduction="batchmean"))
-            csst_loss = 0.5 * (self.beta * in_sample_csst_loss + cross_sample_csst_loss)
-
-            loss = cls_loss + self.alpha * csst_loss
+            # csst_loss = 0.5 * (self.beta * in_sample_csst_loss + cross_sample_csst_loss)
+            # loss = cls_loss + self.alpha * csst_loss
+            csst_loss = self.alpha * in_sample_csst_loss + self.beta * cross_sample_csst_loss
+            loss = cls_loss + csst_loss
             return {"cls": cls_loss.item(),
                     "in_sample_csst": in_sample_csst_loss.item(),
                     "cross_sample_csst": cross_sample_csst_loss.item(),
