@@ -10,6 +10,7 @@ def get_wrapper(
     model: Module,
     alpha: float = 1.0,
     beta: float = 0.5,
+    gamma: float = -1,
     consistency: str = None,
     consist_func: str = None,
     stop_grad: bool = False,
@@ -33,7 +34,8 @@ def get_wrapper(
             return RDropDAWrapper(model=model,
                                   consistency=consistency,
                                   alpha=alpha,
-                                  beta=beta)
+                                  beta=beta,
+                                  gamma=gamma)
     elif wrapper == "uda":
         return SemiSupvWrapper(model=model,
                                alpha=alpha,

@@ -46,6 +46,7 @@ def setup_ViT(args):
         alpha=args.alpha,
         beta=args.beta,
         stop_grad=args.stop_grad,
+        gamma=args.gamma,
     )
 
     wrapped.to(args.device)
@@ -91,6 +92,7 @@ def setup_ResNet(args):
         alpha=args.alpha,
         beta=args.beta,
         stop_grad=args.stop_grad,
+        gamma=args.gamma,
     )
 
     wrapped.to(args.device)
@@ -298,6 +300,8 @@ def main():
     parser.add_argument("--pretrained", type=bool_flag, default=True, const=True, nargs="?",
                         help="Whether load pretrained model from url.")
 
+    parser.add_argument("-koi", "--keep_original_image", action="store_true",
+                        help="Keep original, non-augmented image in the batch.")
     parser.add_argument("--aug_type", type=str, choices=["cifar"], default=None,
                         help="Type of data augmentation to use.")
     parser.add_argument("--two_aug", type=bool_flag, nargs="?", default=False, const=True,
@@ -332,6 +336,8 @@ def main():
     parser.add_argument("--consist_func", default=None, type=str, choices=["kl", "js", "ce", "cosine", "l2", "mutual"],
                         help="Type of divergence function if consistency is adopted.")
     parser.add_argument("--stop_grad", action="store_true", help="Whether stop grad for the good submodel.")
+    parser.add_argument("--gamma", type=float, default=-1,
+                        help="If positive, also use the average prob for classification loss in rdropDA.")
 
     # optimizer args
     parser.add_argument("--learning_rate", default=1e-2, type=float,

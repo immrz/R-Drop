@@ -15,31 +15,52 @@ class RDropDAWrapper(ConsistencyWrapper):
         consistency: str,
         alpha: float = 1.0,
         beta: float = 0.5,
+        gamma: float = -1,
     ):
         super().__init__(model=model, alpha=alpha)
         self.consistency = consistency
         self.beta = beta
+        self.gamma = gamma
         self.ce = nn.CrossEntropyLoss()
+        self.nll = nn.NLLLoss()
         assert self.consistency in ["prob", "logit"]
 
-    def forward(self, x: Union[Tensor, Tuple[Tensor, Tensor]], labels: Tensor = None):
-        """If training, `labels` will be given, and `x` will be a list of two tensors.
-        Each x_i will be forwarded twice. Return losses.
-        If testing, return the outputs of `model` instead.
-        """
-        if self.training:
-            # double each input and forward, compute classification loss
-            bs = x[0].shape[0]  # original batch size
+    def _cat_and_split(self, x: Tuple[Tensor, Union[Tensor, Tuple[Tensor, Tensor]]], labels: Tensor):
+        bs = x[0].shape[0]
+        if isinstance(x[1], Tensor):
             x1, x2 = x
             x = torch.cat([x1, x1.clone(), x2, x2.clone()], dim=0)
             labels = torch.cat([labels, labels.clone(), labels.clone(), labels.clone()], dim=0)
             logits, _ = self.model(x)
             cls_loss = self.ce(logits, labels)
-
-            # compute consistency loss among the four outputs
             logits1, logits2, logits3, logits4 = torch.split(logits, bs, dim=0)
+        else:
+            assert isinstance(x[1], (tuple, list))
+            orig_x, (x1, x2) = x
+            x = torch.cat([orig_x, x1, x1.clone(), x2, x2.clone()], dim=0)
+            labels = torch.cat([labels, labels.clone(), labels.clone(), labels.clone(), labels.clone()], dim=0)
+            logits, _ = self.model(x)
+            cls_loss = self.ce(logits, labels)
+            _, logits1, logits2, logits3, logits4 = torch.split(logits, bs, dim=0)
+        return cls_loss, (logits1, logits2, logits3, logits4)
+
+    def forward(self, x: Union[Tensor, Tuple[Tensor, Union[Tensor, Tuple[Tensor, Tensor]]]], labels: Tensor = None):
+        """If training, `labels` will be given, and `x` will be a list of two tensors.
+        Each x_i will be forwarded twice. Return losses.
+        If testing, return the outputs of `model` instead.
+        """
+        if self.training:
+            # concat x, compute classification loss, and then split into logits
+            cls_loss, (logits1, logits2, logits3, logits4) = self._cat_and_split(x, labels)
+
+            # the rdrop loss -> model randomness
             in_sample_csst_loss = (bidirectional_kl_divergence(logits1, logits2)
                                    + bidirectional_kl_divergence(logits3, logits4))
+
+            # the additional classification loss, if any
+            additional_cls_loss = 0.0
+
+            # the data consistency loss -> data randomness
             if self.consistency == "logit":
                 # mixup the logits
                 cross_sample_csst_loss = bidirectional_kl_divergence(logits1 + logits2, logits3 + logits4)
@@ -50,11 +71,15 @@ class RDropDAWrapper(ConsistencyWrapper):
                 logp1, logp2 = p1.log(), p2.log()
                 cross_sample_csst_loss = 0.5 * (F.kl_div(logp1, p2, reduction="batchmean")
                                                 + F.kl_div(logp2, p1, reduction="batchmean"))
+                if self.gamma > 0:
+                    additional_cls_loss = 0.5 * (self.nll(logp1, labels) + self.nll(logp2, labels))
+
             # csst_loss = 0.5 * (self.beta * in_sample_csst_loss + cross_sample_csst_loss)
             # loss = cls_loss + self.alpha * csst_loss
             csst_loss = self.alpha * in_sample_csst_loss + self.beta * cross_sample_csst_loss
-            loss = cls_loss + csst_loss
+            loss = cls_loss + csst_loss + self.gamma * additional_cls_loss
             return {"cls": cls_loss.item(),
+                    "cls_additional": additional_cls_loss.item() if isinstance(additional_cls_loss, Tensor) else 0.,
                     "in_sample_csst": in_sample_csst_loss.item(),
                     "cross_sample_csst": cross_sample_csst_loss.item(),
                     "csst": csst_loss.item(),
@@ -64,7 +89,8 @@ class RDropDAWrapper(ConsistencyWrapper):
             return self.model(x, labels=labels)
 
     def __str__(self):
-        return f"{self.__class__.__name__}(consistency={self.consistency}, alpha={self.alpha}, beta={self.beta})"
+        return (f"{self.__class__.__name__}(consistency={self.consistency}, alpha={self.alpha}, "
+                f"beta={self.beta}, gamma={self.gamma})")
 
 
 class RDropDAMutualWrapper(ConsistencyWrapper):

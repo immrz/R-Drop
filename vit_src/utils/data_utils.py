@@ -1,5 +1,7 @@
 import logging
 import os
+from typing import Tuple, Any
+from PIL import Image
 
 import torch
 from torchvision import transforms, datasets
@@ -8,6 +10,31 @@ from timm.data.auto_augment import rand_augment_transform, augment_and_mix_trans
 
 
 logger = logging.getLogger(__name__)
+
+
+class KeepOrigImgCIFAR100(datasets.CIFAR100):
+    def __init__(self, resize_transform, **kwargs):
+        super().__init__(**kwargs)
+        assert resize_transform is not None
+        self.resize_transform = resize_transform
+
+    def __getitem__(self, index: int) -> Tuple[Any, Any]:
+        img, target = self.data[index], self.targets[index]
+
+        # doing this so that it is consistent with all other datasets
+        # to return a PIL Image
+        img = Image.fromarray(img)
+
+        # `resize_transform` only resizes the image, so this is the original image
+        orig_img = self.resize_transform(img)
+
+        if self.transform is not None:
+            img = self.transform(img)
+
+        if self.target_transform is not None:
+            target = self.target_transform(target)
+
+        return (orig_img, img), target
 
 
 def get_loader(args, transform=None):
@@ -36,14 +63,22 @@ def get_loader(args, transform=None):
             if args.local_rank in [-1, 0] else None
 
     else:
-        trainset = datasets.CIFAR100(root=args.data_dir,
-                                     train=True,
-                                     download=True,
-                                     transform=transform_train)
+        if not args.keep_original_image:
+            trainset = datasets.CIFAR100(root=args.data_dir,
+                                         train=True,
+                                         download=True,
+                                         transform=transform_train)
+        else:
+            trainset = KeepOrigImgCIFAR100(root=args.data_dir,
+                                           train=True,
+                                           download=True,
+                                           transform=transform_train,
+                                           resize_transform=transform_test)
         testset = datasets.CIFAR100(root=args.data_dir,
                                     train=False,
                                     download=True,
                                     transform=transform_test) if args.local_rank in [-1, 0] else None
+
     if args.local_rank == 0:
         torch.distributed.barrier()
 
