@@ -18,6 +18,7 @@ class SemiSupvDataLoader:
     def __init__(self, supv_loader, unsupv_loader):
         self.supv_loader = supv_loader
         self.unsupv_loader = unsupv_loader
+        self.dataset = self.supv_loader.dataset
         self.supv_iter = None
         self.unsupv_iter = iter(self.unsupv_loader)
 
@@ -42,7 +43,7 @@ class SemiSupvDataLoader:
 
 def get_uda_loader(args, unsupv_ratio=7, supv_size=4000):
     assert args.dataset == "cifar100" and args.aug_type == "cifar", "Other datasets not supported currently"
-    assert args.train_batch_size // (unsupv_ratio + 1) == 0
+    assert args.train_batch_size % (unsupv_ratio + 1) == 0
 
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()

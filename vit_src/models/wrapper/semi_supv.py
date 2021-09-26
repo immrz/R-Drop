@@ -18,6 +18,7 @@ class SemiSupvWrapper(ConsistencyWrapper):
         super().__init__(model=model, alpha=alpha)
         self.beta = beta
         self.rdrop = rdrop
+        self.ce = nn.CrossEntropyLoss()
 
     def forward_with_rdrop(self, x: Tuple[Tensor, Tuple[Tensor, Tensor]], labels: Tensor = None):
         supv_x, (unsupv_x1, unsupv_x2) = x
@@ -84,5 +85,5 @@ class SemiSupvWrapper(ConsistencyWrapper):
         else:
             return self.model(x, labels=labels)
 
-    def __repr__(self):
+    def __str__(self):
         return f"{self.__class__.__name__}(use_rdrop={self.rdrop}, alpha={self.alpha}, beta={self.beta})"
