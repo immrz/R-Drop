@@ -38,20 +38,8 @@ def setup_ViT(args):
     model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes, alpha=args.alpha)
     model.load_from(np.load(args.pretrained_dir))
 
-    wrapped = models.get_wrapper(
-        wrapper=args.wrapper,
-        model=model,
-        consistency=args.consistency,
-        consist_func=args.consist_func,
-        alpha=args.alpha,
-        beta=args.beta,
-        stop_grad=args.stop_grad,
-        gamma=args.gamma,
-    )
-
-    wrapped.to(args.device)
     logger.info("{}".format(config))
-    return args, wrapped
+    return args, model
 
 
 def setup_effnet(args):
@@ -62,12 +50,8 @@ def setup_effnet(args):
     model = getattr(models, args.model_type)(
         pretrained=args.pretrained,
         num_classes=num_classes,
-        dropout_prob=args.dropout_prob,
-        survival_prob=args.prob_end,
-        consistency=args.consistency,
-        consist_func=args.consist_func,
-        alpha=args.alpha,
-        stop_grad=args.stop_grad,
+        drop_rate=args.drop_rate,
+        drop_path_rate=1 - args.prob_end,
     )
 
     model.to(args.device)
@@ -84,19 +68,8 @@ def setup_ResNet(args):
         probs=(args.prob_start, args.prob_end) if args.stoch_depth else (1, 1),
         num_classes=num_classes,
     )
-    wrapped = models.get_wrapper(
-        wrapper=args.wrapper,
-        model=model,
-        consistency=args.consistency,
-        consist_func=args.consist_func,
-        alpha=args.alpha,
-        beta=args.beta,
-        stop_grad=args.stop_grad,
-        gamma=args.gamma,
-    )
 
-    wrapped.to(args.device)
-    return args, wrapped
+    return args, model
 
 
 def valid(args, model, writer, test_loader, global_step):
@@ -164,23 +137,53 @@ def train(args, model):
     if not hasattr(model, "get_custom_transform"):
         transform = None
     else:
-        transform = (model.get_custom_transform(is_training=True), model.get_custom_transform(is_training=False))
+        transform = model.get_custom_transform()
 
     if args.wrapper == "uda":
         train_loader, test_loader = get_uda_loader(args)
     else:
         train_loader, test_loader = get_loader(args, transform=transform)
 
-    # print transforms
+    # Wrapper, e.g., RDrop or RDropDA
+    wrapped = models.get_wrapper(
+        wrapper=args.wrapper,
+        model=model,
+        consistency=args.consistency,
+        consist_func=args.consist_func,
+        alpha=args.alpha,
+        beta=args.beta,
+        stop_grad=args.stop_grad,
+        gamma=args.gamma,
+    )
+    wrapped.to(args.device)
+    model = wrapped
+
+    # log args, model and transforms
     if args.local_rank in [-1, 0]:
-        print("Train transforms is:", train_loader.dataset.transforms)
-        print("Test transforms is:", test_loader.dataset.transforms)
+        for k, v in vars(args).items():
+            print(f"{k:>40s}: {str(v)}")
+        print(repr(model))
+        print(f"Number of parameters of the model: {count_parameters(model):.1f}M")
+        print("Train transforms is:", train_loader.dataset.transform)
+        print("Test transforms is:", test_loader.dataset.transform)
+
+    if args.dry_run:
+        return
 
     # Prepare optimizer and scheduler
-    optimizer = torch.optim.SGD(model.parameters(),
-                                lr=args.learning_rate,
-                                momentum=0.9,
-                                weight_decay=args.weight_decay)
+    if args.opt is None or args.opt == "sgd":
+        optimizer = torch.optim.SGD(model.parameters(),
+                                    lr=args.learning_rate,
+                                    momentum=0.9,
+                                    weight_decay=args.weight_decay)
+    elif args.opt == "rmsprop":
+        optimizer = torch.optim.RMSprop(model.parameters(),
+                                        lr=args.learning_rate,
+                                        momentum=0.9,
+                                        weight_decay=args.weight_decay)
+    else:
+        raise NotImplementedError
+
     t_total = args.num_steps
     if args.decay_type == "cosine":
         scheduler = WarmupCosineSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total)
@@ -318,7 +321,7 @@ def main():
                              "Will always run one evaluation at the end of training.")
 
     # stochastic depth & dropout args
-    parser.add_argument("--dropout_prob", type=float, default=0.1)
+    parser.add_argument("--drop_rate", type=float, default=0.1, help="dropout rate")
     parser.add_argument("--stoch_depth", type=bool_flag, default=True, const=True, nargs="?",
                         help="Whether to use stochastic depth.")
     parser.add_argument("--prob_start", type=float, default=1., help="Survival probability of the first layer.")
@@ -340,6 +343,7 @@ def main():
                         help="If positive, also use the average prob for classification loss in rdropDA.")
 
     # optimizer args
+    parser.add_argument("--opt", default=None, type=str, help="Which optimizer to use; default: SGD.")
     parser.add_argument("--learning_rate", default=1e-2, type=float,
                         help="The initial learning rate for SGD.")
     parser.add_argument("--weight_decay", default=0, type=float,
@@ -402,15 +406,6 @@ def main():
         args, model = setup_effnet(args)
     else:
         args, model = setup_ResNet(args)
-
-    # log args and model
-    if args.local_rank in [-1, 0]:
-        for k, v in vars(args).items():
-            print(f"{k:>40s}: {str(v)}")
-        print(repr(model))
-        print(f"Number of parameters of the model: {count_parameters(model):.1f}M")
-    if args.dry_run:
-        return
 
     # Training
     train(args, model)

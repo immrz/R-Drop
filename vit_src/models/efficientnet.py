@@ -7,34 +7,35 @@ import torch.nn as nn
 from typing import Union, Tuple
 
 
-class EffNetV2(nn.Module):
+class EffNet(nn.Module):
     def __init__(
         self,
         variant: str,
         pretrained: bool = False,
         num_classes: int = 1000,
-        dropout_prob: float = 0.1,
-        survival_prob: float = 0.8,
+        drop_rate: float = 0.2,
+        drop_path_rate: float = 0.2,
     ) -> None:
 
         super().__init__()
 
-        self.dropout_prob = dropout_prob
-        self.survival_prob = survival_prob
         self.net = timm.create_model(variant,
                                      pretrained=pretrained,
                                      num_classes=num_classes,
-                                     drop_rate=self.dropout_prob,
-                                     drop_path_rate=1 - self.survival_prob)
+                                     drop_rate=drop_rate,
+                                     drop_path_rate=drop_path_rate)
         self.ce = nn.CrossEntropyLoss()
 
         self.embedding = None
         self.net.global_pool.register_forward_hook(self.get_emb_hook())
 
-    def get_custom_transform(self, is_training=True):
-        data_config = resolve_data_config({}, model=self.net, use_test_size=not is_training)
-        transform = create_transform(is_training=is_training, **data_config)
-        return transform
+    def get_custom_transform(self):
+        transforms = []
+        for is_training in [True, False]:
+            data_config = resolve_data_config({}, model=self.net, use_test_size=not is_training)
+            transform = create_transform(is_training=is_training, **data_config)
+            transforms.append(transform)
+        return transforms
 
     def get_emb_hook(self):
         def hook(module, input, output):
@@ -51,4 +52,8 @@ class EffNetV2(nn.Module):
 
 
 def efficientnetv2_m(**kwargs):
-    return EffNetV2("tf_efficientnetv2_m", **kwargs)
+    return EffNet("tf_efficientnetv2_m", **kwargs)
+
+
+def efficientnet_b0(**kwargs):
+    return EffNet("efficientnet_b0", **kwargs)
