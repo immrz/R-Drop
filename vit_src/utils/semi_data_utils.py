@@ -1,17 +1,56 @@
-from torchvision import datasets
+from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, RandomSampler, DistributedSampler, SequentialSampler
 import torch
 import os
+from timm.data.auto_augment import rand_augment_transform
+from PIL import Image
 
-from .data_utils import get_transform
 
-
-class CIFAR100(datasets.CIFAR100):
+class SemiSupvCIFAR100(datasets.CIFAR100):
     def __init__(self, size=-1, **kwargs):
         super().__init__(**kwargs)
-        if 0 < size < len(self.data):
-            self.data = self.data[:size]
-            self.targets = self.targets[:size]
+        self.normal_aug_train = [transforms.RandomHorizontalFlip(),
+                                 transforms.RandomCrop(32, 4),
+                                 transforms.ToTensor(),
+                                 transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])]
+        self.id_transform = [transforms.ToTensor(),
+                             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])]
+        if not self.train:
+            # test set
+            self.transform = transforms.Compose(self.id_transform)
+        else:
+            # train set
+            if 0 < size < len(self.data):
+                # supervised train set
+                self.data = self.data[:size]
+                self.targets = self.targets[:size]
+                self.transform = transforms.Compose(self.normal_aug_train)
+            else:
+                # unsupervised train set
+                ra = rand_augment_transform(config_str="rand-m10-n2-mstd200", hparams={})
+                self.transform = [transforms.Compose(self.normal_aug_train),
+                                  transforms.Compose([ra] + self.normal_aug_train)]
+
+    def __getitem__(self, index):
+        img, target = self.data[index], self.targets[index]
+
+        # doing this so that it is consistent with all other datasets
+        # to return a PIL Image
+        img = Image.fromarray(img)
+
+        # for supervised trainset or test, img is a Tensor;
+        # for unsupervised trianset, img is a tuple of two Tensors, where the first is *original* image,
+        # and the second is *augmented* image.
+        if self.transform is not None:
+            if isinstance(self.transform, (tuple, list)):
+                img = [t(img) for t in self.transform]
+            else:
+                img = self.transform(img)
+
+        if self.target_transform is not None:
+            target = self.target_transform(target)
+
+        return img, target
 
 
 class SemiSupvDataLoader:
@@ -48,17 +87,10 @@ def get_uda_loader(args, unsupv_ratio=7, supv_size=4000):
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()
 
-    supv_transform_train, transform_test = get_transform(args.aug_type, args.img_size,
-                                                         two_aug=False, rand_aug=args.rand_aug)
-    unsupv_transform_train, _ = get_transform(args.aug_type, args.img_size,
-                                              two_aug=True, rand_aug=args.rand_aug)
-
-    supv_dataset = CIFAR100(size=supv_size, root=args.data_dir, train=True,
-                            download=True, transform=supv_transform_train)
-    unsupv_dataset = CIFAR100(size=-1, root=args.data_dir, train=True,
-                              download=True, transform=unsupv_transform_train)
-    testset = CIFAR100(size=-1, root=args.data_dir, train=False, download=True,
-                       transform=transform_test) if args.local_rank in [-1, 0] else None
+    supv_dataset = SemiSupvCIFAR100(size=supv_size, root=args.data_dir, train=True, download=True)
+    unsupv_dataset = SemiSupvCIFAR100(size=-1, root=args.data_dir, train=True, download=True)
+    testset = SemiSupvCIFAR100(size=-1, root=args.data_dir, train=False, download=True) \
+        if args.local_rank in [-1, 0] else None
 
     if args.local_rank == 0:
         torch.distributed.barrier()

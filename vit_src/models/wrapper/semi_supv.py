@@ -20,6 +20,10 @@ class SemiSupvWrapper(ConsistencyWrapper):
         self.rdrop = rdrop
         self.ce = nn.CrossEntropyLoss()
 
+        # uda hyperparameters
+        self.temperature = 0.4
+        self.threshold = 0.8
+
     def forward_with_rdrop(self, x: Tuple[Tensor, Tuple[Tensor, Tensor]], labels: Tensor = None):
         supv_x, (unsupv_x1, unsupv_x2) = x
         supv_bs, unsupv_bs = supv_x.shape[0], unsupv_x1.shape[0]
@@ -55,7 +59,7 @@ class SemiSupvWrapper(ConsistencyWrapper):
                 "agg": loss}
 
     def forward_without_rdrop(self, x: Tuple[Tensor, Tuple[Tensor, Tensor]], labels: Tensor = None):
-        supv_x, (unsupv_x1, unsupv_x2) = x
+        supv_x, (unsupv_x1, unsupv_x2) = x  # unsupv_x1 is original image
         supv_bs, unsupv_bs = supv_x.shape[0], unsupv_x1.shape[0]
 
         # stack all the inputs

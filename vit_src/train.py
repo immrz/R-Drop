@@ -362,11 +362,13 @@ def main():
     parser.add_argument("--fp16", action="store_true",
                         help="Whether to use 16-bit float precision instead of 32-bit")
     parser.add_argument("--dry_run", action="store_true", help="Display model and exit.")
+    parser.add_argument("--disable_tqdm", action="store_true", help="Do not use tqdm for logging.")
 
     args = parser.parse_args()
 
     # disable tqdm if on itp server
-    args.disable_tqdm = "AMLT_OUTPUT_DIR" in os.environ
+    if "AMLT_OUTPUT_DIR" in os.environ:
+        args.disable_tqdm = True
 
     # must use two augmentations if wrapper is twoaug or rdropDA
     args.two_aug = args.wrapper in ["twoaug", "rdropDA", "uda"]
