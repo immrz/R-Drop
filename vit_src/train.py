@@ -291,7 +291,7 @@ def main():
     parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
                                                  "ViT-L_32", "ViT-H_14", "wide_resnet101_2",
                                                  "resnet152", "resnet50", "resnet110",
-                                                 "efficientnetv2_m"],
+                                                 "efficientnetv2_m", "efficientnet_b0"],
                         default="ViT-B_16",
                         help="Which variant to use.")
     parser.add_argument("--pretrained_dir", type=str, default="checkpoint/ViT-B_16.npz",

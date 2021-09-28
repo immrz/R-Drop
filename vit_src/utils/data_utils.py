@@ -44,8 +44,10 @@ def get_loader(args, transform=None):
     if transform is not None:
         transform_train, transform_test = transform
     else:
-        transform_train, transform_test = get_transform(args.aug_type, args.img_size,
-                                                        two_aug=args.two_aug, rand_aug=args.rand_aug)
+        transform_train, transform_test = get_transform(args.aug_type, args.img_size, rand_aug=args.rand_aug)
+    # if use two augmentations in a batch
+    if args.two_aug:
+        transform_train = TwoCropsTransform(transform_train)
 
     if args.dataset == "cifar10":
         trainset = datasets.CIFAR10(root=args.data_dir,
@@ -101,7 +103,7 @@ def get_loader(args, transform=None):
     return train_loader, test_loader
 
 
-def get_transform(aug_type: str, img_size, two_aug=False, rand_aug=None):
+def get_transform(aug_type: str, img_size, rand_aug=None):
     if aug_type is None:
         # determine the augmentation to use
         if rand_aug is None:
@@ -140,9 +142,6 @@ def get_transform(aug_type: str, img_size, two_aug=False, rand_aug=None):
 
     else:
         raise NotImplementedError
-
-    if two_aug:
-        transform_train = TwoCropsTransform(transform_train)
 
     return transform_train, transform_test
 
