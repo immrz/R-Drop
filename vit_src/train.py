@@ -134,7 +134,7 @@ def train(args, model):
     args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
 
     # Prepare dataset
-    if not hasattr(model, "get_custom_transform"):
+    if not hasattr(model, "get_custom_transform") or args.force_not_model_custom_transform:
         transform = None
     else:
         transform = model.get_custom_transform()
@@ -305,6 +305,8 @@ def main():
 
     parser.add_argument("-koi", "--keep_original_image", action="store_true",
                         help="Keep original, non-augmented image in the batch.")
+    parser.add_argument("-fnmct", "--force_not_model_custom_transform", action="store_true",
+                        help="Do not use customized transform provided by certain models, e.g., effnets.")
     parser.add_argument("--aug_type", type=str, choices=["cifar"], default=None,
                         help="Type of data augmentation to use.")
     parser.add_argument("--two_aug", type=bool_flag, nargs="?", default=False, const=True,

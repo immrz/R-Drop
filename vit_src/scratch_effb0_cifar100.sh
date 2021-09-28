@@ -12,9 +12,9 @@ mt="efficientnet_b0"
 ds="cifar100"
 nstep=30000
 ws=1500
-lr=0.01
+lr=0.1
 wd="1e-5"
-opt="rmsprop"
+opt="sgd"
 
 data_dir="${AMLT_DATA_DIR:-data}"
 output_dir="${AMLT_OUTPUT_DIR:-output}"
