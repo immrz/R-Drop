@@ -5,6 +5,7 @@ from torch.optim.lr_scheduler import LambdaLR
 
 logger = logging.getLogger(__name__)
 
+
 class ConstantLRSchedule(LambdaLR):
     """ Constant learning rate schedule.
     """
@@ -61,3 +62,21 @@ class WarmupCosineSchedule(LambdaLR):
         # progress after warmup
         progress = float(step - self.warmup_steps) / float(max(1, self.t_total - self.warmup_steps))
         return max(0.0, 0.5 * (1. + math.cos(math.pi * float(self.cycles) * 2.0 * progress)))
+
+
+class ExpDecaySchedule(LambdaLR):
+    def __init__(self, optimizer, decay_at, decay_ratio, t_total, last_epoch=-1):
+        assert decay_at is not None and isinstance(decay_at, (tuple, list))
+        assert all([isinstance(e, int) for e in decay_at])
+        assert max(decay_at) < t_total
+
+        self.decay_at = sorted(decay_at)
+        self.decay_ratio = decay_ratio
+        self.t_total = t_total
+        super(ExpDecaySchedule, self).__init__(optimizer, self.lr_lambda, last_epoch=last_epoch)
+
+    def lr_lambda(self, step):
+        if step in self.decay_at:
+            return self.decay_ratio ** (self.decay_at.index(step) + 1)
+        else:
+            return 1.

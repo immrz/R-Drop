@@ -18,7 +18,7 @@ import torch.cuda.amp as amp
 from models.modeling import VisionTransformer, CONFIGS
 import models
 
-from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
+from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule, ExpDecaySchedule
 from utils.data_utils import get_loader
 from utils.semi_data_utils import get_uda_loader
 from utils.utils import AverageMeter, bool_flag, simple_accuracy, \
@@ -63,11 +63,19 @@ def setup_ResNet(args):
     if args.dataset == "imagenet":
         num_classes=1000
 
-    model = getattr(models, args.model_type)(
-        pretrained=args.pretrained,
-        probs=(args.prob_start, args.prob_end) if args.stoch_depth else (1, 1),
-        num_classes=num_classes,
-    )
+    if "resnet" in args.model_type:
+        model = getattr(models, args.model_type)(
+            pretrained=args.pretrained,
+            probs=(args.prob_start, args.prob_end) if args.stoch_depth else (1, 1),
+            num_classes=num_classes,
+        )
+    else:
+        # wrn-28-10
+        model = getattr(models, args.model_type)(
+            dropout_rate=args.drop_rate,
+            keep_prob=args.prob_end,
+            num_classes=num_classes,
+        )
 
     return args, model
 
@@ -187,6 +195,8 @@ def train(args, model):
     t_total = args.num_steps
     if args.decay_type == "cosine":
         scheduler = WarmupCosineSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total)
+    elif args.decay_type == "exp":
+        scheduler = ExpDecaySchedule(optimizer, decay_at=args.decay_at, decay_ratio=args.decay_ratio, t_total=t_total)
     else:
         scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=t_total)
 
@@ -289,7 +299,7 @@ def main():
     parser.add_argument("--dataset", choices=["cifar10", "cifar100", "imagenet"], default="cifar10",
                         help="Which downstream task.")
     parser.add_argument("--model_type", choices=["ViT-B_16", "ViT-B_32", "ViT-L_16",
-                                                 "ViT-L_32", "ViT-H_14", "wide_resnet101_2",
+                                                 "ViT-L_32", "ViT-H_14", "wrn_28_10",
                                                  "resnet152", "resnet50", "resnet110",
                                                  "efficientnetv2_m", "efficientnet_b0"],
                         default="ViT-B_16",
@@ -352,8 +362,12 @@ def main():
                         help="Weight deay if we apply some.")
     parser.add_argument("--num_steps", default=200000, type=int,
                         help="Total number of training epochs to perform.")
-    parser.add_argument("--decay_type", choices=["cosine", "linear"], default="cosine",
+    parser.add_argument("--decay_type", choices=["cosine", "linear", "exp"], default="cosine",
                         help="How to decay the learning rate.")
+    parser.add_argument("--decay_at", type=int, nargs="+", default=None,
+                        help="Decay lr at these steps if decay_type is exp.")
+    parser.add_argument("--decay_ratio", type=float, default=0.2,
+                        help="Decay ratio of lr if decay_type is exp.")
     parser.add_argument("--warmup_steps", default=500, type=int,
                         help="Step of training to perform learning rate warmup for.")
     parser.add_argument("--max_grad_norm", default=1.0, type=float,
