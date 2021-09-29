@@ -28,6 +28,7 @@ then
         --model_type ${mt} \
         --dataset ${ds} \
         --num_steps ${nstep} \
+        --decay_type exp \
         --decay_at ${at} \
         --decay_ratio ${ratio} \
         --learning_rate ${lr} \
@@ -46,6 +47,7 @@ else
         --model_type ${mt} \
         --dataset ${ds} \
         --num_steps ${nstep} \
+        --decay_type exp \
         --decay_at ${at} \
         --decay_ratio ${ratio} \
         --learning_rate ${lr} \
