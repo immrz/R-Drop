@@ -11,7 +11,6 @@ from datetime import timedelta
 import torch
 
 from tqdm import tqdm
-from torch.utils.tensorboard import SummaryWriter
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.cuda.amp as amp
 
@@ -21,8 +20,16 @@ import models
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule, ExpDecaySchedule
 from utils.data_utils import get_loader
 from utils.semi_data_utils import get_uda_loader
-from utils.utils import AverageMeter, bool_flag, simple_accuracy, \
-    save_model, count_parameters, set_seed, move_to_device
+from utils.utils import (
+    AverageMeter,
+    bool_flag,
+    simple_accuracy,
+    save_model,
+    count_parameters,
+    set_seed,
+    move_to_device,
+    MySummaryWriter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +91,10 @@ def valid(args, model, writer, test_loader, global_step):
     # Validation!
     eval_losses = AverageMeter()
 
-    logger.info("***** Running Validation *****")
-    logger.info("  Num steps = %d", len(test_loader))
-    logger.info("  Batch size = %d", args.eval_batch_size)
+    if not args.less_log:
+        logger.info("***** Running Validation *****")
+        logger.info("  Num steps = %d", len(test_loader))
+        logger.info("  Batch size = %d", args.eval_batch_size)
 
     model.eval()
     all_preds, all_label = [], []
@@ -122,14 +130,15 @@ def valid(args, model, writer, test_loader, global_step):
     all_preds, all_label = all_preds[0], all_label[0]
     accuracy = simple_accuracy(all_preds, all_label)
 
-    logger.info("\n")
-    logger.info("Validation Results")
-    logger.info("Global Steps: %d" % global_step)
-    logger.info("Valid Loss: %2.5f" % eval_losses.avg)
-    logger.info("Valid Accuracy: %2.5f" % accuracy)
+    if not args.less_log:
+        logger.info("\n")
+        logger.info("Validation Results")
+        logger.info("Global Steps: %d" % global_step)
+        logger.info("Valid Loss: %2.5f" % eval_losses.avg)
+        logger.info("Valid Accuracy: %2.5f" % accuracy)
 
-    writer.add_scalar("valid/loss", scalar_value=eval_losses.avg, global_step=global_step)
-    writer.add_scalar("valid/accuracy", scalar_value=accuracy, global_step=global_step)
+        writer.add_scalar("valid/loss", scalar_value=eval_losses.avg, global_step=global_step)
+        writer.add_scalar("valid/accuracy", scalar_value=accuracy, global_step=global_step)
     return accuracy
 
 
@@ -137,7 +146,7 @@ def train(args, model):
     """ Train the model """
     if args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir, exist_ok=True)
-        writer = SummaryWriter(log_dir=os.path.join(args.output_dir, "logs", args.name))
+        writer = MySummaryWriter(less_log=args.less_log, log_dir=os.path.join(args.output_dir, "logs", args.name))
 
     args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
 
@@ -263,7 +272,7 @@ def train(args, model):
                 epoch_iterator.set_description(
                     "Training (%d / %d Steps) (loss=%2.5f)" % (global_step, t_total, losses.avg)
                 )
-                if args.local_rank in [-1, 0]:
+                if args.local_rank in [-1, 0] and not args.less_log:
                     for loss_key in loss:
                         writer.add_scalar(f"train/{loss_key}_loss",
                                           scalar_value=losses.get_avg(loss_key),
@@ -383,6 +392,7 @@ def main():
                         help="Whether to use 16-bit float precision instead of 32-bit")
     parser.add_argument("--dry_run", action="store_true", help="Display model and exit.")
     parser.add_argument("--disable_tqdm", action="store_true", help="Do not use tqdm for logging.")
+    parser.add_argument("--less_log", action="store_true", help="Reduce log to reduce IO operation.")
 
     args = parser.parse_args()
 

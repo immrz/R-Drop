@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import argparse
 from collections import defaultdict
+from torch.utils.tensorboard import SummaryWriter
 
 
 class AverageMeter(object):
@@ -108,3 +109,21 @@ def move_to_device(x, device):
         return type(x)(**{k: move_to_device(v, device) for k, v in x.items()})
     else:
         raise NotImplementedError
+
+
+class MySummaryWriter:
+    def __init__(self, less_log, *args, **kwargs):
+        self.less_log = less_log
+        self.writer = SummaryWriter(*args, **kwargs) if not less_log else None
+
+    def add_scalar(self, *args, **kwargs):
+        if self.less_log:
+            return
+        else:
+            self.writer.add_scalar(*args, **kwargs)
+
+    def close(self):
+        if self.less_log:
+            return
+        else:
+            self.writer.close()
