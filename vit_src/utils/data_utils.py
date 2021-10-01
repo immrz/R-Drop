@@ -2,6 +2,7 @@ import logging
 import os
 from typing import Tuple, Any
 from PIL import Image
+import random
 
 import torch
 from torchvision import transforms, datasets
@@ -140,6 +141,13 @@ def get_transform(aug_type: str, img_size, rand_aug=None):
             transforms.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761]),
         ])
 
+        if rand_aug is not None:
+            if rand_aug.startswith("augmix"):
+                aug = augment_and_mix_transform(config_str=rand_aug, hparams={})
+            else:
+                aug = rand_augment_transform(config_str=rand_aug, hparams={})
+            transform_train.transforms.insert(0, aug)
+
     else:
         raise NotImplementedError
 
@@ -161,3 +169,17 @@ class TwoCropsTransform:
 
     def __repr__(self):
         return "TwoCropsTransform(" + repr(self.base_transform) + ")"
+
+
+class RandomSelectTwoTransform:
+    def __init__(self, candidates):
+        assert len(candidates) >= 3, "Please provide at least three transforms!"
+        self.candidates = candidates
+
+    def __call__(self, x):
+        t1, t2 = random.choices(self.candidates, k=2)
+        q, k = t1(x), t2(x)
+        return [q, k]
+
+    def __repr__(self):
+        return "RandomSelectTwoTransform(\n" + repr(self.candidates) + "\n)"
