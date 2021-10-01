@@ -3,6 +3,7 @@ import os
 from typing import Tuple, Any
 from PIL import Image
 import random
+from typing import List, Callable, Union
 
 import torch
 from torchvision import transforms, datasets
@@ -44,11 +45,17 @@ def get_loader(args, transform=None):
 
     if transform is not None:
         transform_train, transform_test = transform
+    elif args.aug_type == "cifar-random":
+        transform_candidates = [get_transform("cifar", 32),
+                                get_transform("cifar", 32, rand_aug="rand-m5-n2-mstd0"),
+                                get_transform("cifar", 32, rand_aug="augmix-m3")]
+        transform_train = [t[0] for t in transform_candidates]
+        transform_test = transform_candidates[0][1]
     else:
         transform_train, transform_test = get_transform(args.aug_type, args.img_size, rand_aug=args.rand_aug)
     # if use two augmentations in a batch
     if args.two_aug:
-        transform_train = TwoCropsTransform(transform_train)
+        transform_train = RandomTwoTransform(transform_train)
 
     if args.dataset == "cifar10":
         trainset = datasets.CIFAR10(root=args.data_dir,
@@ -154,32 +161,25 @@ def get_transform(aug_type: str, img_size, rand_aug=None):
     return transform_train, transform_test
 
 
-class TwoCropsTransform:
-    """Take two random crops of one image as the query and key.
-    From https://github.com/facebookresearch/simsiam/blob/main/simsiam/loader.py.
+class RandomTwoTransform:
+    """Randomly select two transforms from candidates and return the resulted
+    two augmentations. If only one candidate is given, use it twice.
     """
 
-    def __init__(self, base_transform):
-        self.base_transform = base_transform
+    def __init__(self, candidates: Union[List, Callable]):
+        if not isinstance(candidates, (tuple, list)):
+            self.candidates = [candidates, candidates]
+        elif len(candidates) == 1:
+            self.candidates = [candidates[0], candidates[0]]
+        else:
+            self.candidates = candidates
 
     def __call__(self, x):
-        q = self.base_transform(x)
-        k = self.base_transform(x)
-        return [q, k]
+        if len(self.candidates) < 3:
+            t1, t2 = self.candidates
+        else:
+            t1, t2 = random.choices(self.candidates, k=2)
+        return [t1(x), t2(x)]
 
     def __repr__(self):
-        return "TwoCropsTransform(" + repr(self.base_transform) + ")"
-
-
-class RandomSelectTwoTransform:
-    def __init__(self, candidates):
-        assert len(candidates) >= 3, "Please provide at least three transforms!"
-        self.candidates = candidates
-
-    def __call__(self, x):
-        t1, t2 = random.choices(self.candidates, k=2)
-        q, k = t1(x), t2(x)
-        return [q, k]
-
-    def __repr__(self):
-        return "RandomSelectTwoTransform(\n" + repr(self.candidates) + "\n)"
+        return "RandomTwoTransform(" + repr(self.candidates) + ")"

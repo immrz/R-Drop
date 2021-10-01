@@ -163,14 +163,8 @@ def train(args, model):
 
     # Wrapper, e.g., RDrop or RDropDA
     wrapped = models.get_wrapper(
-        wrapper=args.wrapper,
         model=model,
-        consistency=args.consistency,
-        consist_func=args.consist_func,
-        alpha=args.alpha,
-        beta=args.beta,
-        stop_grad=args.stop_grad,
-        gamma=args.gamma,
+        **vars(args),
     )
     wrapped.to(args.device)
     model = wrapped
@@ -326,7 +320,7 @@ def main():
                         help="Keep original, non-augmented image in the batch.")
     parser.add_argument("-fnmct", "--force_not_model_custom_transform", action="store_true",
                         help="Do not use customized transform provided by certain models, e.g., effnets.")
-    parser.add_argument("--aug_type", type=str, choices=["cifar"], default=None,
+    parser.add_argument("--aug_type", type=str, choices=["cifar", "cifar-random"], default=None,
                         help="Type of data augmentation to use.")
     parser.add_argument("--two_aug", type=bool_flag, nargs="?", default=False, const=True,
                         help="Create two augmentations in a batch. This will be set by the program automatically.")
@@ -362,6 +356,10 @@ def main():
     parser.add_argument("--stop_grad", action="store_true", help="Whether stop grad for the good submodel.")
     parser.add_argument("--gamma", type=float, default=-1,
                         help="If positive, also use the average prob for classification loss in rdropDA.")
+    parser.add_argument("--model_cfunc", type=str, choices=["kl", "l2"], default="kl",
+                        help="Which consistency loss function to apply on model level.")
+    parser.add_argument("--data_cfunc", type=str, choices=["kl", "l2"], default="kl",
+                        help="Which consistency loss function to apply on data level.")
 
     # optimizer args
     parser.add_argument("--opt", default=None, type=str, help="Which optimizer to use; default: SGD.")

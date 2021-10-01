@@ -10,10 +10,9 @@ def get_wrapper(
     model: Module,
     alpha: float = 1.0,
     beta: float = 0.5,
-    gamma: float = -1,
     consistency: str = None,
     consist_func: str = None,
-    stop_grad: bool = False,
+    **kwargs,
 ) -> Module:
     if wrapper is None or wrapper.lower() == "none":
         return model
@@ -21,8 +20,7 @@ def get_wrapper(
         return RDropWrapper(model=model,
                             consistency=consistency,
                             consist_func=consist_func,
-                            alpha=alpha,
-                            stop_grad=stop_grad)
+                            alpha=alpha)
     elif wrapper == "twoaug":
         return TwoAugWrapper(model=model,
                              consistency=consistency is not None,
@@ -32,10 +30,10 @@ def get_wrapper(
             return RDropDAMutualWrapper(model=model, alpha=alpha)
         else:
             return RDropDAWrapper(model=model,
-                                  consistency=consistency,
                                   alpha=alpha,
                                   beta=beta,
-                                  gamma=gamma)
+                                  model_cfunc=kwargs["model_cfunc"],
+                                  data_cfunc=kwargs["data_cfunc"])
     elif wrapper == "uda":
         return SemiSupvWrapper(model=model,
                                alpha=alpha,
