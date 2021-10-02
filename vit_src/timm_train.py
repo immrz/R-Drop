@@ -35,10 +35,10 @@ from timm.utils import *
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy, JsdCrossEntropy
 from timm.optim import create_optimizer_v2, optimizer_kwargs
 from timm.scheduler import create_scheduler
-from timm.utils import ApexScaler, NativeScaler
 
 from models import get_wrapper
 from utils.data_utils import RandomTwoTransform
+from utils.utils import move_to_device
 
 try:
     from apex import amp
@@ -287,7 +287,7 @@ parser.add_argument('--log-wandb', action='store_true', default=False,
 # args added by me
 parser.add_argument('-gas', '--gradient-accumulation-steps', type=int, default=1)
 parser.add_argument("--wrapper", type=str, default=None, choices=["rdrop", "twoaug", "rdropDA", "uda"],
-                        help="How to train the model. Default is None, i.e., train as usual.")
+                    help="How to train the model. Default is None, i.e., train as usual.")
 parser.add_argument("--alpha", default=0.3, type=float,
                     help="alpha for kl loss")
 parser.add_argument("--beta", default=0.5, type=float,
@@ -395,14 +395,12 @@ def main():
         model = convert_splitbn_model(model, max(num_aug_splits, 2))
 
     # create rdropDA wrapper here
-    wrapper = get_wrapper(wrapper=args.wrapper, model=model, alpha=args.alpha,
+    wrapper = get_wrapper(wrapper="rdropDA", model=model, alpha=args.alpha,
                           beta=args.beta, model_cfunc="kl", data_cfunc="kl")
     model = wrapper
 
     # move model to GPU, enable channels last layout if set
     model.cuda()
-    if args.channels_last:
-        model = model.to(memory_format=torch.channels_last)
 
     # setup synchronized BatchNorm for distributed training
     if args.distributed and args.sync_bn:
@@ -488,7 +486,7 @@ def main():
 
     # divide batch_size by gradient accumulation steps
     assert args.batch_size % args.gradient_accumulation_steps == 0
-    args.batch_size /= args.gradient_accumulation_steps
+    args.batch_size = args.batch_size // args.gradient_accumulation_steps
 
     # create the train and eval datasets
     dataset_train = create_dataset(
@@ -564,9 +562,8 @@ def main():
         pin_memory=args.pin_mem,
     )
 
-    # use two aug if necessary
-    if args.wrapper == "rdropDA":
-        dataset_train.transform = RandomTwoTransform(dataset_train.transform)
+    # use two aug
+    dataset_train.transform = RandomTwoTransform(dataset_train.transform)
 
     # setup loss function
     if args.jsd:
@@ -674,15 +671,13 @@ def train_one_epoch(
         last_batch = batch_idx == last_idx
         data_time_m.update(time.time() - end)
         if not args.prefetcher:
-            input, target = input.cuda(), target.cuda()
-            if mixup_fn is not None:
-                input, target = mixup_fn(input, target)
-        if args.channels_last:
-            input = input.contiguous(memory_format=torch.channels_last)
+            input = move_to_device(input, args.device)
+            target = move_to_device(target, args.device)
 
         with amp_autocast():
-            loss = model(input, target) / args.gradient_accumulation_steps
-            # loss = loss_fn(output, target)
+            loss = model(input, labels=target)["agg"] / args.gradient_accumulation_steps
+
+        input = input[0]
 
         if loss_scaler is not None:
             loss_scaler.backward(loss, optimizer, create_graph=second_order)
@@ -779,15 +774,14 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
         for batch_idx, (input, target) in enumerate(loader):
             last_batch = batch_idx == last_idx
             if not args.prefetcher:
-                input = input.cuda()
-                target = target.cuda()
-            if args.channels_last:
-                input = input.contiguous(memory_format=torch.channels_last)
+                input = move_to_device(input, args.device)
+                target = move_to_device(target, args.device)
 
             with amp_autocast():
                 output = model(input)
             if isinstance(output, (tuple, list)):
                 output = output[0]
+            input = input[0]
 
             # augmentation reduction
             reduce_factor = args.tta

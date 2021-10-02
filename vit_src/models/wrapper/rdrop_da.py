@@ -22,7 +22,7 @@ def compute_DM_consistency(z1, z2, is_logit=True, func="kl"):
                           + F.kl_div(logp2, p1, reduction="batchmean"))
     elif func == "l2":
         assert is_logit
-        return torch.sum((z1 - z2) ** 2) / z1.size(0)
+        return torch.mean((z1 - z2) ** 2)
     else:
         raise NotImplementedError
 
@@ -50,7 +50,11 @@ class RDropDAWrapper(ConsistencyWrapper):
         x1, x2 = x
         x = torch.cat([x1, x1.clone(), x2, x2.clone()], dim=0)
         labels = torch.cat([labels, labels.clone(), labels.clone(), labels.clone()], dim=0)
-        logits, _ = self.model(x)
+
+        logits = self.model(x)
+        if isinstance(logits, (tuple, list)):
+            logits = logits[0]
+
         cls_loss = self.ce(logits, labels)
         logits1, logits2, logits3, logits4 = torch.split(logits, bs, dim=0)
         return cls_loss, (logits1, logits2, logits3, logits4)
@@ -86,7 +90,10 @@ class RDropDAWrapper(ConsistencyWrapper):
                     "agg": loss}
 
         else:
-            return self.model(x, labels=labels)
+            if labels is None:
+                return self.model(x)
+            else:
+                return self.model(x, labels=labels)
 
     def __str__(self):
         return (f"{self.__class__.__name__}(alpha={self.alpha}, beta={self.beta}, "

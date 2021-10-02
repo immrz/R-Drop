@@ -25,5 +25,5 @@ python -m torch.distributed.launch --nproc_per_node=${ngpu} timm_train.py \
     --lr .016 \
     --train-split trainset \
     --val-split val \
-    --data_dir ${data_dir}
+    --data_dir ${data_dir} \
     --output ${output_dir} $@
