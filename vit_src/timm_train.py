@@ -37,6 +37,9 @@ from timm.optim import create_optimizer_v2, optimizer_kwargs
 from timm.scheduler import create_scheduler
 from timm.utils import ApexScaler, NativeScaler
 
+from models import get_wrapper
+from utils.data_utils import RandomTwoTransform
+
 try:
     from apex import amp
     from apex.parallel import DistributedDataParallel as ApexDDP
@@ -72,7 +75,7 @@ parser.add_argument('-c', '--config', default='', type=str, metavar='FILE',
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 
 # Dataset / Model parameters
-parser.add_argument('data_dir', metavar='DIR',
+parser.add_argument('--data_dir', metavar='DIR', required=True,
                     help='path to dataset')
 parser.add_argument('--dataset', '-d', metavar='NAME', default='',
                     help='dataset type (default: ImageFolder/ImageTar if empty)')
@@ -281,6 +284,15 @@ parser.add_argument('--torchscript', dest='torchscript', action='store_true',
 parser.add_argument('--log-wandb', action='store_true', default=False,
                     help='log training and validation metrics to wandb')
 
+# args added by me
+parser.add_argument('-gas', '--gradient-accumulation-steps', type=int, default=1)
+parser.add_argument("--wrapper", type=str, default=None, choices=["rdrop", "twoaug", "rdropDA", "uda"],
+                        help="How to train the model. Default is None, i.e., train as usual.")
+parser.add_argument("--alpha", default=0.3, type=float,
+                    help="alpha for kl loss")
+parser.add_argument("--beta", default=0.5, type=float,
+                    help="Weight of cross-sample-consistency-loss if rdropDA is used.")
+
 
 def _parse_args():
     # Do we have a config file to parse?
@@ -382,6 +394,11 @@ def main():
         assert num_aug_splits > 1 or args.resplit
         model = convert_splitbn_model(model, max(num_aug_splits, 2))
 
+    # create rdropDA wrapper here
+    wrapper = get_wrapper(wrapper=args.wrapper, model=model, alpha=args.alpha,
+                          beta=args.beta, model_cfunc="kl", data_cfunc="kl")
+    model = wrapper
+
     # move model to GPU, enable channels last layout if set
     model.cuda()
     if args.channels_last:
@@ -412,12 +429,12 @@ def main():
     loss_scaler = None
     if use_amp == 'apex':
         model, optimizer = amp.initialize(model, optimizer, opt_level='O1')
-        loss_scaler = ApexScaler()
+        loss_scaler = MyApexScaler()
         if args.local_rank == 0:
             _logger.info('Using NVIDIA APEX AMP. Training in mixed precision.')
     elif use_amp == 'native':
         amp_autocast = torch.cuda.amp.autocast
-        loss_scaler = NativeScaler()
+        loss_scaler = MyNativeScaler()
         if args.local_rank == 0:
             _logger.info('Using native Torch AMP. Training in mixed precision.')
     else:
@@ -468,6 +485,10 @@ def main():
 
     if args.local_rank == 0:
         _logger.info('Scheduled epochs: {}'.format(num_epochs))
+
+    # divide batch_size by gradient accumulation steps
+    assert args.batch_size % args.gradient_accumulation_steps == 0
+    args.batch_size /= args.gradient_accumulation_steps
 
     # create the train and eval datasets
     dataset_train = create_dataset(
@@ -542,6 +563,10 @@ def main():
         crop_pct=data_config['crop_pct'],
         pin_memory=args.pin_mem,
     )
+
+    # use two aug if necessary
+    if args.wrapper == "rdropDA":
+        dataset_train.transform = RandomTwoTransform(dataset_train.transform)
 
     # setup loss function
     if args.jsd:
@@ -644,6 +669,7 @@ def train_one_epoch(
     end = time.time()
     last_idx = len(loader) - 1
     num_updates = epoch * len(loader)
+    global_step = 0
     for batch_idx, (input, target) in enumerate(loader):
         last_batch = batch_idx == last_idx
         data_time_m.update(time.time() - end)
@@ -655,75 +681,83 @@ def train_one_epoch(
             input = input.contiguous(memory_format=torch.channels_last)
 
         with amp_autocast():
-            output = model(input)
-            loss = loss_fn(output, target)
+            loss = model(input, target) / args.gradient_accumulation_steps
+            # loss = loss_fn(output, target)
+
+        if loss_scaler is not None:
+            loss_scaler.backward(loss, optimizer, create_graph=second_order)
+        else:
+            loss.backward()
 
         if not args.distributed:
             losses_m.update(loss.item(), input.size(0))
 
-        optimizer.zero_grad()
-        if loss_scaler is not None:
-            loss_scaler(
-                loss, optimizer,
-                clip_grad=args.clip_grad, clip_mode=args.clip_mode,
-                parameters=model_parameters(model, exclude_head='agc' in args.clip_mode),
-                create_graph=second_order)
-        else:
-            loss.backward(create_graph=second_order)
-            if args.clip_grad is not None:
-                dispatch_clip_grad(
-                    model_parameters(model, exclude_head='agc' in args.clip_mode),
-                    value=args.clip_grad, mode=args.clip_mode)
-            optimizer.step()
+        if last_batch or (batch_idx + 1) % args.gradient_accumulation_steps == 0:
 
-        if model_ema is not None:
-            model_ema.update(model)
+            if loss_scaler is not None:
+                loss_scaler(
+                    loss, optimizer,
+                    clip_grad=args.clip_grad, clip_mode=args.clip_mode,
+                    parameters=model_parameters(model, exclude_head='agc' in args.clip_mode),
+                    create_graph=second_order)
+            else:
+                if args.clip_grad is not None:
+                    dispatch_clip_grad(
+                        model_parameters(model, exclude_head='agc' in args.clip_mode),
+                        value=args.clip_grad, mode=args.clip_mode)
+                optimizer.step()
 
-        torch.cuda.synchronize()
-        num_updates += 1
-        batch_time_m.update(time.time() - end)
-        if last_batch or batch_idx % args.log_interval == 0:
-            lrl = [param_group['lr'] for param_group in optimizer.param_groups]
-            lr = sum(lrl) / len(lrl)
+            optimizer.zero_grad()
+            global_step += 1
 
-            if args.distributed:
-                reduced_loss = reduce_tensor(loss.data, args.world_size)
-                losses_m.update(reduced_loss.item(), input.size(0))
+            if model_ema is not None:
+                model_ema.update(model)
 
-            if args.local_rank == 0:
-                _logger.info(
-                    'Train: {} [{:>4d}/{} ({:>3.0f}%)]  '
-                    'Loss: {loss.val:>9.6f} ({loss.avg:>6.4f})  '
-                    'Time: {batch_time.val:.3f}s, {rate:>7.2f}/s  '
-                    '({batch_time.avg:.3f}s, {rate_avg:>7.2f}/s)  '
-                    'LR: {lr:.3e}  '
-                    'Data: {data_time.val:.3f} ({data_time.avg:.3f})'.format(
-                        epoch,
-                        batch_idx, len(loader),
-                        100. * batch_idx / last_idx,
-                        loss=losses_m,
-                        batch_time=batch_time_m,
-                        rate=input.size(0) * args.world_size / batch_time_m.val,
-                        rate_avg=input.size(0) * args.world_size / batch_time_m.avg,
-                        lr=lr,
-                        data_time=data_time_m))
+            torch.cuda.synchronize()
+            num_updates += 1
+            batch_time_m.update(time.time() - end)
+            if last_batch or global_step % args.log_interval == 0:
+                lrl = [param_group['lr'] for param_group in optimizer.param_groups]
+                lr = sum(lrl) / len(lrl)
 
-                if args.save_images and output_dir:
-                    torchvision.utils.save_image(
-                        input,
-                        os.path.join(output_dir, 'train-batch-%d.jpg' % batch_idx),
-                        padding=0,
-                        normalize=True)
+                if args.distributed:
+                    reduced_loss = reduce_tensor(loss.data, args.world_size)
+                    losses_m.update(reduced_loss.item(), input.size(0))
 
-        if saver is not None and args.recovery_interval and (
-                last_batch or (batch_idx + 1) % args.recovery_interval == 0):
-            saver.save_recovery(epoch, batch_idx=batch_idx)
+                if args.local_rank == 0:
+                    _logger.info(
+                        'Train: {} [{:>4d}/{} ({:>3.0f}%)]  '
+                        'Loss: {loss.val:>9.6f} ({loss.avg:>6.4f})  '
+                        'Time: {batch_time.val:.3f}s, {rate:>7.2f}/s  '
+                        '({batch_time.avg:.3f}s, {rate_avg:>7.2f}/s)  '
+                        'LR: {lr:.3e}  '
+                        'Data: {data_time.val:.3f} ({data_time.avg:.3f})'.format(
+                            epoch,
+                            batch_idx, len(loader),
+                            100. * batch_idx / last_idx,
+                            loss=losses_m,
+                            batch_time=batch_time_m,
+                            rate=input.size(0) * args.world_size / batch_time_m.val,
+                            rate_avg=input.size(0) * args.world_size / batch_time_m.avg,
+                            lr=lr,
+                            data_time=data_time_m))
 
-        if lr_scheduler is not None:
-            lr_scheduler.step_update(num_updates=num_updates, metric=losses_m.avg)
+                    if args.save_images and output_dir:
+                        torchvision.utils.save_image(
+                            input,
+                            os.path.join(output_dir, 'train-batch-%d.jpg' % batch_idx),
+                            padding=0,
+                            normalize=True)
 
-        end = time.time()
-        # end for
+            if saver is not None and args.recovery_interval and (
+                    last_batch or (batch_idx + 1) % args.recovery_interval == 0):
+                saver.save_recovery(epoch, batch_idx=batch_idx)
+
+            if lr_scheduler is not None:
+                lr_scheduler.step_update(num_updates=num_updates, metric=losses_m.avg)
+
+            end = time.time()
+            # end for
 
     if hasattr(optimizer, 'sync_lookahead'):
         optimizer.sync_lookahead()
@@ -793,6 +827,51 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
     metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg)])
 
     return metrics
+
+
+class MyApexScaler:
+    state_dict_key = "amp"
+
+    def __call__(self, loss, optimizer, clip_grad=None, clip_mode='norm', parameters=None, create_graph=False):
+        if clip_grad is not None:
+            dispatch_clip_grad(amp.master_params(optimizer), clip_grad, mode=clip_mode)
+        optimizer.step()
+
+    def backward(self, loss, optimizer, create_graph=False):
+        with amp.scale_loss(loss, optimizer) as scaled_loss:
+            scaled_loss.backward(create_graph=create_graph)
+
+    def state_dict(self):
+        if 'state_dict' in amp.__dict__:
+            return amp.state_dict()
+
+    def load_state_dict(self, state_dict):
+        if 'load_state_dict' in amp.__dict__:
+            amp.load_state_dict(state_dict)
+
+
+class MyNativeScaler:
+    state_dict_key = "amp_scaler"
+
+    def __init__(self):
+        self._scaler = torch.cuda.amp.GradScaler()
+
+    def __call__(self, loss, optimizer, clip_grad=None, clip_mode='norm', parameters=None, create_graph=False):
+        if clip_grad is not None:
+            assert parameters is not None
+            self._scaler.unscale_(optimizer)  # unscale the gradients of optimizer's assigned params in-place
+            dispatch_clip_grad(parameters, clip_grad, mode=clip_mode)
+        self._scaler.step(optimizer)
+        self._scaler.update()
+
+    def backward(self, loss, optimizer, create_graph=False):
+        self._scaler.scale(loss).backward(create_graph=create_graph)
+
+    def state_dict(self):
+        return self._scaler.state_dict()
+
+    def load_state_dict(self, state_dict):
+        self._scaler.load_state_dict(state_dict)
 
 
 if __name__ == '__main__':
