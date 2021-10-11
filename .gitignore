@@ -3,4 +3,5 @@ amlt
 .amltignore
 .idea
 tox.ini
-notebooks
+# notebooks
+fairseq_src/**/notebooks
